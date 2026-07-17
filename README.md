@@ -6,6 +6,8 @@ Pitcher Next-Start turns public MLB data into calibrated Bayesian projections fo
 
 Built with Rust, Tauri v2, and Svelte. No Python notebook and no R runtime in the application path.
 
+[Project website](https://walrusquant.github.io/pitcher-next-start/) · [Model documentation](docs/learn.md)
+
 ## What it delivers
 
 - Date-based scoring for probable MLB starters

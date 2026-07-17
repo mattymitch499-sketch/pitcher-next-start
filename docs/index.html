@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Pitcher Next-Start turns public MLB data into calibrated Bayesian projections for a starting pitcher's next outing." />
+    <meta name="theme-color" content="#f2eee3" />
+    <title>Pitcher Next-Start — Bayesian MLB projections</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Pitcher Next-Start home">
+        <span class="brand-mark">PNS</span>
+        <span>Pitcher Next-Start</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="#models">Models</a>
+        <a href="#validation">Validation</a>
+        <a class="button button-small" href="https://github.com/WalrusQuant/pitcher-next-start">View on GitHub</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero">
+        <div class="eyebrow">MLB · NEXT-START RESEARCH</div>
+        <h1>Predict the pitcher’s next start—not the story around it.</h1>
+        <p class="hero-copy">Pitcher Next-Start converts public MLB data into calibrated Bayesian projections for expected runs, FIP, innings, and strikeouts.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/WalrusQuant/pitcher-next-start">Explore the project</a>
+          <a class="text-link" href="#models">How the models work →</a>
+        </div>
+        <div class="hero-frame">
+          <img src="images/dashboard.png" alt="Pitcher Next-Start dashboard showing MLB probable starter projections" />
+        </div>
+      </section>
+
+      <section class="proof-strip" aria-label="Project highlights">
+        <div><strong>4</strong><span>independent models</span></div>
+        <div><strong>13,821</strong><span>historical starts</span></div>
+        <div><strong>90%</strong><span>calibrated intervals</span></div>
+        <div><strong>Rust</strong><span>modeling core</span></div>
+      </section>
+
+      <section class="section split" id="models">
+        <div>
+          <div class="eyebrow">ONE START · FOUR OUTPUTS</div>
+          <h2>Useful projections, with uncertainty left intact.</h2>
+          <p>Each target has its own Bayesian linear model, posterior, and predictive interval. Outputs are never derived from one another.</p>
+          <ul class="feature-list">
+            <li><span>01</span><div><strong>Expected runs allowed</strong><p>A full predictive distribution, not a vague confidence score.</p></div></li>
+            <li><span>02</span><div><strong>Projected FIP</strong><p>A defense-independent view of the expected outing.</p></div></li>
+            <li><span>03</span><div><strong>Expected workload</strong><p>Separate innings and strikeout estimates with calibrated bands.</p></div></li>
+            <li><span>04</span><div><strong>Decision context</strong><p>Recent form, park, opponent, rest, workload, and model drivers.</p></div></li>
+          </ul>
+        </div>
+        <figure class="player-frame">
+          <img src="images/player.png" alt="Detailed pitcher next-start analysis page" />
+          <figcaption>Every dashboard recommendation opens into a complete pitcher view.</figcaption>
+        </figure>
+      </section>
+
+      <section class="section validation" id="validation">
+        <div class="eyebrow">BUILT TO BE CHECKED</div>
+        <h2>Walk-forward validation. No random splits. No hidden uncertainty.</h2>
+        <div class="cards">
+          <article><h3>Leakage-safe features</h3><p>Every historical feature is built only from information available before that start.</p></article>
+          <article><h3>Baseline comparisons</h3><p>Model error is reported beside league, pitcher-average, and recent-form baselines.</p></article>
+          <article><h3>Live reconciliation</h3><p>Saved predictions can be matched to completed MLB starts so performance stays visible.</p></article>
+        </div>
+      </section>
+
+      <section class="section architecture">
+        <div>
+          <div class="eyebrow">CORE BEFORE CHROME</div>
+          <h2>A desktop product backed by a reusable modeling core.</h2>
+        </div>
+        <div class="pipeline" aria-label="Application architecture">
+          <span>Rust core</span><b>→</b><span>Tauri v2</span><b>→</b><span>Svelte UI</span>
+        </div>
+      </section>
+
+      <section class="closing">
+        <div class="eyebrow">OPEN SOURCE RESEARCH SOFTWARE</div>
+        <h2>See the model, the validation, and the decisions it produces.</h2>
+        <a class="button" href="https://github.com/WalrusQuant/pitcher-next-start">View the repository</a>
+        <p>This is a research model, not a betting guarantee.</p>
+      </section>
+    </main>
+
+    <footer>
+      <span>Pitcher Next-Start</span>
+      <span>Rust · Tauri · Svelte · Public MLB data</span>
+    </footer>
+  </body>
+</html>

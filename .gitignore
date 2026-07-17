@@ -1,0 +1,9 @@
+/target/
+/node_modules/
+/.pnpm-store/
+/dist/
+.DS_Store
+data/raw/
+/_skill_extract.txt
+/_template_heads.txt
+/_verify.txt

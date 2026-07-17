@@ -1,0 +1,17 @@
+[package]
+name = "pitcher-next-start"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "pitcher_next_start_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+pns-core = { path = "../crates/pns-core" }
+serde = { version = "1", features = ["derive"] }
+tauri = { version = "2", features = [] }
+

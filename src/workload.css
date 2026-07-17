@@ -1,0 +1,11 @@
+.history-head,
+.history-row {
+  grid-template-columns: 100px minmax(160px, 1fr) repeat(9, 52px);
+}
+
+@media (max-width: 800px) {
+  .history-head,
+  .history-row {
+    min-width: 850px;
+  }
+}

@@ -1,0 +1,19 @@
+.form-block { padding: 0 20px 18px; }
+.form-heading { display: flex; justify-content: space-between; margin-bottom: 8px; }
+.form-heading span { color: #718096; font-size: 9px; letter-spacing: .09em; text-transform: uppercase; }
+.form-heading b { color: #566478; font: 400 8px DM Mono; text-transform: uppercase; }
+.form-grid { display: grid; grid-template-columns: repeat(7, 1fr); overflow: hidden; border: 1px solid #243143; border-radius: 6px; background: #0e1621; }
+.form-grid > div { min-width: 0; padding: 9px 8px; }
+.form-grid > div + div { border-left: 1px solid #243143; }
+.form-grid small { display: block; margin-bottom: 3px; color: #59677a; font: 500 7px DM Mono; }
+.form-grid strong { color: #d7dee8; font: 500 11px DM Mono; }
+.context-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.context-row span { padding: 4px 7px; border: 1px solid #273547; border-radius: 4px; color: #7f8da0; background: #101923; font: 500 8px DM Mono; }
+.context-row span.positive-factor { border-color: #28513f; color: #64d49d; }
+.context-row span.risk-factor { border-color: #613039; color: #e77c84; }
+
+@media (max-width: 1050px) {
+  .form-grid { grid-template-columns: repeat(4, 1fr); }
+  .form-grid > div:nth-child(5) { border-left: 0; border-top: 1px solid #243143; }
+  .form-grid > div:nth-child(n+6) { border-top: 1px solid #243143; }
+}

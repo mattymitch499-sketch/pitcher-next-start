@@ -1,0 +1,15 @@
+{
+  "held_out_rows": 2775,
+  "held_out_dates": 113,
+  "fip_mae": 2.0528620955421806,
+  "runs_mae": 1.5693087068175595,
+  "runs_interval_coverage": 0.8122522522522523,
+  "calibrated_runs_interval_coverage": 0.9001801801801802,
+  "recommended_interval_scale": 1.1384374319907689,
+  "league_fip_mae": 2.0884185309852055,
+  "pitcher_history_fip_mae": 2.0743882755359637,
+  "last_five_fip_mae": 2.2257786391573884,
+  "league_runs_mae": 1.597472228136532,
+  "pitcher_history_runs_mae": 1.5856667320864704,
+  "last_five_runs_mae": 1.6692085241367776
+}

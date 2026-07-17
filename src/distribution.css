@@ -1,0 +1,71 @@
+.hero-runs .distribution-values {
+  display: grid;
+  grid-template-columns: auto 1fr auto 1fr auto 1fr auto 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin: 15px 0 6px;
+}
+
+.hero-runs .distribution-values b { font: 500 20px DM Mono; }
+.hero-runs .distribution-values strong { color: #58d99a; font: 500 24px DM Mono; }
+.hero-runs .distribution-values i { height: 1px; background: #344355; }
+.hero-runs .distribution-labels { display: grid; grid-template-columns: repeat(5, 1fr); }
+.hero-runs .distribution-labels small { color: #68778a; font: 10px DM Mono; text-align: center; text-transform: uppercase; }
+.hero-runs .distribution-labels small:first-child { text-align: left; }
+.hero-runs .distribution-labels small:last-child { text-align: right; }
+
+.detail-stats span {
+  color: #8492a5;
+  font-size: 11px;
+}
+
+.hero-runs .distribution {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  margin-top: 15px;
+}
+
+.hero-runs .distribution > div {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 35px;
+  min-width: 0;
+}
+
+.hero-runs .distribution > div:not(:last-child)::after {
+  position: absolute;
+  top: 15px;
+  left: 42%;
+  width: 116%;
+  height: 1px;
+  background: #344355;
+  content: '';
+}
+
+.hero-runs .distribution b,
+.hero-runs .distribution strong {
+  position: relative;
+  z-index: 1;
+  align-self: flex-start;
+  padding-right: 12px;
+  background: #111925;
+  color: #e6ebf2;
+  font: 500 20px DM Mono;
+}
+
+.hero-runs .distribution-base strong { color: #58d99a; font-size: 24px; }
+.hero-runs .distribution small { color: #68778a; font: 10px DM Mono; text-transform: uppercase; }
+.hero-runs .distribution > div:not(:first-child):not(:last-child) { align-items: center; }
+.hero-runs .distribution > div:not(:first-child):not(:last-child) b,
+.hero-runs .distribution > div:not(:first-child):not(:last-child) strong { align-self: center; padding: 0 12px; }
+.hero-runs .distribution > div:last-child { align-items: flex-end; }
+.hero-runs .distribution > div:last-child b { align-self: flex-end; padding-right: 0; padding-left: 12px; }
+
+.detail-stats > div:last-child {
+  grid-column: span 2;
+}
+
+@media (max-width: 800px) {
+  .detail-stats > div:last-child { grid-column: span 2; }
+}

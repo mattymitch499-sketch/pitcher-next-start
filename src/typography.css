@@ -1,0 +1,70 @@
+/* Readability pass: increase small UI copy without changing display metrics. */
+.brand small,
+.model-status,
+.model-status b,
+.kicker,
+.date-field label,
+.control-note span,
+.card-topline,
+.confidence,
+.primary-metric span,
+.band-label span,
+.band-label b,
+.band-values small,
+.judgment > span,
+.form-heading span,
+.form-heading b,
+.form-grid small,
+.context-row span,
+.validation-strip span,
+.matchup-banner span,
+.detail-panel .panel-title span,
+.hero-number span,
+.hero-runs > span,
+.detail-stats span,
+.factor-detail span,
+.learn-table .table-head span,
+.score-table span,
+.coverage span {
+  font-size: 10px;
+}
+
+.page-heading p,
+.control-note b,
+.export-button,
+.run-button,
+.pitcher p,
+.compact-read,
+.analysis-button,
+.judgment p,
+.form-grid strong,
+.validation-strip b,
+.matchup-banner b,
+.driver,
+.model-read,
+.detail-stats b,
+.factor-detail p,
+.explanation,
+.learn section p,
+.learn ul,
+.learn-lede {
+  font-size: 12px;
+}
+
+.back-button,
+.detail-header p,
+.detail-validation span,
+.learn aside a,
+.learn-table span,
+.learn-table b,
+.score-table b,
+.score-table strong,
+.callout b,
+.callout span {
+  font-size: 11px;
+}
+
+.topbar nav a { font-size: 14px; }
+.pitcher h3 { font-size: 17px; }
+.panel-title h2 { font-size: 15px; }
+.compact-metrics small { font-size: 10px; }

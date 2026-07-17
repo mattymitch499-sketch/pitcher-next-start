@@ -1,0 +1,25 @@
+.validation-strip {
+  display: grid;
+  grid-template-columns: 1.5fr repeat(3, 1fr);
+  margin: 0 0 16px;
+  overflow: hidden;
+  border: 1px solid #263244;
+  border-radius: 7px;
+  background: #0f1722;
+}
+
+.validation-strip > div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 11px 14px;
+}
+
+.validation-strip > div + div { border-left: 1px solid #263244; }
+.validation-strip span { color: #637185; font: 500 8px DM Mono; letter-spacing: .08em; text-transform: uppercase; }
+.validation-strip b { color: #bac5d3; font: 500 11px DM Mono; }
+
+@media (max-width: 800px) {
+  .validation-strip { grid-template-columns: 1fr 1fr; }
+  .validation-strip > div { border-bottom: 1px solid #263244; }
+}

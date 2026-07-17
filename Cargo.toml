@@ -1,0 +1,4 @@
+[workspace]
+members = ["crates/pns-core", "src-tauri"]
+resolver = "2"
+

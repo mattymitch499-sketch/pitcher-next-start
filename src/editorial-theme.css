@@ -1,0 +1,394 @@
+:root {
+  --paper: #f3eee4;
+  --paper-raised: #fbf8f1;
+  --paper-muted: #e9e1d3;
+  --ink: #1d292d;
+  --ink-soft: #435155;
+  --muted: #77766e;
+  --rule: #cec4b2;
+  --rule-dark: #aa9e8b;
+  --clay: #ad4f3a;
+  --clay-dark: #833a2d;
+  --grass: #55715a;
+  --ochre: #9b7439;
+}
+
+html,
+body,
+:root {
+  color: var(--ink);
+  background: var(--paper);
+}
+
+body {
+  background-image:
+    linear-gradient(rgba(118, 100, 74, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(118, 100, 74, .025) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+.topbar {
+  border-bottom: 1px solid var(--rule-dark);
+  background: rgba(251, 248, 241, .96);
+  box-shadow: 0 3px 0 rgba(173, 79, 58, .12);
+}
+
+.brand { color: var(--ink); }
+.brand-mark {
+  border: 1px solid var(--clay-dark);
+  border-radius: 50%;
+  color: #fffaf0;
+  background: var(--clay);
+  box-shadow: none;
+}
+.brand small,
+.topbar nav a,
+.model-status { color: var(--muted); }
+.topbar nav a:hover,
+.topbar nav a.active { color: var(--ink); }
+.topbar nav a.active:after { height: 3px; background: var(--clay); }
+.model-status i { background: var(--grass); box-shadow: 0 0 0 3px rgba(85, 113, 90, .14); }
+.model-status b { border-color: var(--rule); color: var(--ink-soft); background: var(--paper-muted); }
+
+.kicker,
+.learn aside .eyebrow,
+.learn article > .eyebrow { color: var(--clay) !important; }
+.page-heading p,
+.detail-header p,
+.validation-page > header > p:last-child,
+.learn-lede { color: var(--muted); }
+
+.control-bar,
+.projection-card,
+.validation-strip,
+.matchup-banner,
+.hero-number,
+.hero-runs,
+.detail-panel,
+.history-panel,
+.comparison-panel,
+.data-status,
+.workload-projections,
+.validation-overview,
+.validation-comparison,
+.live-results,
+.learn aside,
+.learn-table,
+.score-table,
+.example-card,
+.coverage,
+.formula,
+.example,
+.callout,
+.pipeline span,
+.rule-list span {
+  border-color: var(--rule);
+  color: var(--ink);
+  background: var(--paper-raised);
+  box-shadow: none;
+}
+
+.control-bar,
+.projection-card,
+.detail-panel,
+.history-panel,
+.comparison-panel,
+.hero-number,
+.hero-runs,
+.validation-comparison,
+.live-results { border-radius: 3px; }
+
+.date-field,
+.control-note,
+.matchup-banner > div + div,
+.compact-metrics > div + div,
+.primary-metric > div + div,
+.band-values > div + div,
+.data-status > div + div,
+.workload-projections > div + div,
+.validation-overview > div + div { border-color: var(--rule); }
+.date-field label,
+.control-note span,
+.matchup-banner span,
+.hero-number span,
+.hero-runs > span,
+.compact-metrics span,
+.detail-panel .panel-title span,
+.data-status span,
+.workload-projections span,
+.validation-overview span { color: var(--muted); }
+.date-field input,
+.control-note b,
+.matchup-banner b { color: var(--ink); }
+
+.run-button {
+  border: 1px solid var(--clay-dark);
+  color: #fffaf2;
+  background: var(--clay);
+  box-shadow: 2px 2px 0 rgba(93, 48, 36, .18);
+}
+.run-button:hover:not(:disabled) { background: var(--clay-dark); }
+.export-button,
+.analysis-button,
+.detail-navigation > div button,
+.live-results .panel-title button {
+  border-color: var(--rule-dark);
+  color: var(--clay-dark);
+  background: transparent;
+}
+.export-button:hover:not(:disabled),
+.analysis-button:hover,
+.detail-navigation > div button:hover:not(:disabled) { border-color: var(--clay); background: rgba(173, 79, 58, .07); }
+.export-button span { color: var(--clay); }
+
+.card-topline,
+.projection-card footer {
+  border-color: var(--rule);
+  color: var(--muted);
+  background: var(--paper-muted);
+}
+.avatar {
+  border-color: var(--rule-dark);
+  color: var(--clay-dark);
+  background: transparent;
+}
+.pitcher h3,
+.page-heading h1,
+.detail-header h1,
+.panel-title h2,
+.validation-page h1,
+.validation-page h2,
+.learn h1,
+.learn h2 { color: var(--ink); }
+.pitcher p,
+.compact-read,
+.model-read,
+.explanation,
+.factor-detail p,
+.panel-title > div p { color: var(--muted); }
+
+.compact-metrics,
+.primary-metric,
+.band-values,
+.driver,
+.detail-stats,
+.factor-detail > div,
+.history-table,
+.comparison-table,
+.validation-table,
+.live-table,
+.slate-tools {
+  border-color: var(--rule);
+  background: rgba(233, 225, 211, .34);
+}
+.compact-metrics strong,
+.detail-stats b,
+.factor-detail b,
+.history-row b,
+.comparison-table b,
+.comparison-table span,
+.live-table strong,
+.live-table span,
+.validation-table span { color: var(--ink-soft); }
+.hero-number strong,
+.hero-runs strong,
+.distribution-base strong,
+.validation-table strong { color: var(--clay); }
+
+.distribution > div:not(:last-child)::after { background: var(--rule-dark); }
+.distribution b { color: var(--ink); }
+.distribution small { color: var(--muted); }
+.outlook-summary {
+  border: 0;
+  border-left: 4px solid var(--clay);
+  border-radius: 0;
+  background: var(--paper-muted);
+}
+.outlook-summary span { color: var(--clay-dark); }
+.outlook-summary p { color: var(--ink-soft); }
+
+.confidence { border: 1px solid currentColor; background: transparent; }
+.confidence-high { color: var(--grass); }
+.confidence-medium { color: var(--ochre); }
+.confidence-low { color: var(--clay); }
+.driver { color: var(--ink-soft); }
+.driver.positive i { color: var(--grass); background: rgba(85, 113, 90, .14); }
+.driver.negative i { color: var(--clay); background: rgba(173, 79, 58, .12); }
+.driver.neutral i { color: var(--muted); background: var(--paper-muted); }
+
+.history-head,
+.validation-table > div:first-child,
+.live-table > div:first-child,
+.score-table > div:first-child { background: var(--paper-muted); }
+.history-row,
+.comparison-table > div + div,
+.validation-table > div + div,
+.live-table > div + div,
+.score-table > div + div { border-color: var(--rule); }
+.history-head span,
+.validation-table b,
+.live-table b { color: var(--muted); }
+
+.slate-tools input,
+.slate-tools select {
+  border-color: var(--rule);
+  color: var(--ink);
+  background: var(--paper-raised);
+}
+.slate-tools input:focus,
+.slate-tools select:focus { border-color: var(--clay); }
+
+.validation-strip b,
+.validation-overview strong,
+.workload-projections strong { color: var(--ink); }
+.validation-strip span,
+.validation-overview small,
+.workload-projections p,
+.workload-validation p { color: var(--muted); }
+.workload-validation { background: var(--paper-muted); }
+
+.learn aside a { color: var(--muted); }
+.learn aside a:hover { color: var(--clay-dark); background: var(--paper-muted); }
+.learn article > section { border-color: var(--rule); }
+.learn section p,
+.learn li { color: var(--ink-soft); }
+.formula { border-left-color: var(--clay); }
+.formula span { color: var(--muted); }
+.example strong,
+.coverage .good b { color: var(--grass); }
+
+.empty-state,
+.validation-empty,
+.no-filter-results {
+  border-color: var(--rule-dark);
+  color: var(--muted);
+  background: rgba(251, 248, 241, .45);
+}
+.empty-icon span { background: var(--rule-dark); }
+.empty-icon span:nth-child(2) { background: var(--clay); }
+.empty-state h3 { color: var(--ink); }
+.empty-state button { border-color: var(--clay); color: var(--clay-dark); background: transparent; }
+
+.alert.success { border-color: #829282; color: #405946; background: #e5ebe1; }
+.alert.error,
+.data-warnings { border-color: #ba796c; color: #873e31; background: #f2ded8; }
+.data-warnings p { color: #873e31; }
+.back-button { color: var(--muted); }
+.back-button:hover { color: var(--clay); }
+
+@media (max-width: 800px) {
+  .topbar { background: var(--paper-raised); }
+}
+
+/* High-specificity cleanup for components originally authored in the dark theme. */
+.hero-runs .distribution b,
+.hero-runs .distribution strong,
+.hero-runs .distribution > div:not(:first-child):not(:last-child) b,
+.hero-runs .distribution > div:not(:first-child):not(:last-child) strong,
+.hero-runs .distribution > div:last-child b {
+  padding-right: 12px;
+  padding-left: 12px;
+  color: var(--ink);
+  background: var(--paper-raised);
+}
+.hero-runs .distribution-base strong { color: var(--clay); }
+.hero-runs .distribution > div:first-child b { padding-left: 0; }
+.hero-runs .distribution > div:last-child b { padding-right: 0; }
+
+.learn-table .table-head { background: var(--paper-muted); }
+.learn-table .table-head span {
+  color: var(--ink-soft);
+  font-weight: 700;
+}
+.learn-table b { color: var(--ink); }
+.learn-table span { color: var(--ink-soft); }
+.learn-table > div + div { border-color: var(--rule); }
+
+.callout,
+.callout.muted {
+  border-color: var(--rule-dark);
+  background: var(--paper-muted);
+}
+.callout { border-left: 4px solid var(--grass); }
+.callout.muted { border-left-color: var(--clay); }
+.callout b,
+.callout.muted b { color: var(--ink); }
+.callout span { color: var(--ink-soft); }
+
+.learn code {
+  border-color: var(--rule);
+  color: var(--clay-dark);
+  background: var(--paper-muted);
+}
+.pipeline span { border-color: var(--rule); color: var(--ink-soft); background: var(--paper-raised); }
+.pipeline i { color: var(--clay); }
+.rule-list span { border-color: var(--rule); color: var(--ink-soft); background: var(--paper-raised); }
+.rule-list b { color: var(--clay); }
+.score-table .winner { background: rgba(85, 113, 90, .10); }
+.score-table b,
+.score-table strong { color: var(--ink-soft); }
+.score-table .winner b,
+.score-table .winner strong { color: var(--grass); }
+.coverage div,
+.coverage div.good {
+  border-color: var(--rule);
+  background: var(--paper-raised);
+}
+.coverage span { color: var(--muted); }
+.coverage b { color: var(--clay); }
+.coverage i { color: var(--rule-dark); }
+.example-card { border-color: var(--rule); background: var(--paper-raised); }
+.example-card span { color: var(--muted); }
+.example-card b { color: var(--ink-soft); }
+.example-card strong { color: var(--clay); }
+.example-card hr { border-color: var(--rule); }
+
+/* Pitcher analysis needs denser, higher-contrast copy than the slate. */
+.pitcher-page {
+  --detail-copy: #3f4b4d;
+  --detail-muted: #5f625d;
+  --detail-label: #555b59;
+}
+.pitcher-page .detail-header p,
+.pitcher-page .matchup-banner span,
+.pitcher-page .hero-number span,
+.pitcher-page .hero-number small,
+.pitcher-page .hero-runs > span,
+.pitcher-page .distribution small,
+.pitcher-page .panel-title span,
+.pitcher-page .panel-title > div p,
+.pitcher-page .data-status span,
+.pitcher-page .workload-projections span,
+.pitcher-page .detail-stats span,
+.pitcher-page .factor-detail span,
+.pitcher-page .history-head span,
+.pitcher-page .comparison-table > div:first-child span {
+  color: var(--detail-label);
+}
+.pitcher-page .matchup-banner b,
+.pitcher-page .data-status b,
+.pitcher-page .workload-projections p,
+.pitcher-page .workload-validation p,
+.pitcher-page .model-read,
+.pitcher-page .explanation,
+.pitcher-page .factor-detail p,
+.pitcher-page .driver,
+.pitcher-page .history-row,
+.pitcher-page .history-row time,
+.pitcher-page .history-row span,
+.pitcher-page .comparison-table span,
+.pitcher-page .detail-validation span {
+  color: var(--detail-copy);
+}
+.pitcher-page .history-row b,
+.pitcher-page .detail-stats b,
+.pitcher-page .factor-detail b,
+.pitcher-page .comparison-table b,
+.pitcher-page .workload-validation b,
+.pitcher-page .detail-validation b {
+  color: var(--ink);
+}
+.pitcher-page .back-button,
+.pitcher-page .detail-navigation > div button {
+  color: var(--detail-muted);
+}

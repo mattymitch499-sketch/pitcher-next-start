@@ -1,4 +1,4 @@
-use crate::{DecisionCard, PnsError, Result};
+use crate::{DecisionCard, ModelInfo, PnsError, Result};
 use chrono::{NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -6,6 +6,10 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrackedPrediction {
+    #[serde(default)]
+    pub model_artifact_id: String,
+    #[serde(default)]
+    pub model_trained_through: String,
     pub pitcher_id: u32,
     pub pitcher_name: String,
     pub target_game_date: String,
@@ -35,7 +39,11 @@ pub fn read_history(root: impl AsRef<Path>) -> Result<Vec<TrackedPrediction>> {
         .map_err(PnsError::from)
 }
 
-pub fn record_predictions(cards: &[DecisionCard], root: impl AsRef<Path>) -> Result<PathBuf> {
+pub fn record_predictions(
+    cards: &[DecisionCard],
+    model: &ModelInfo,
+    root: impl AsRef<Path>,
+) -> Result<PathBuf> {
     let path = history_path(&root);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -51,6 +59,8 @@ pub fn record_predictions(cards: &[DecisionCard], root: impl AsRef<Path>) -> Res
         rows.insert(
             key,
             TrackedPrediction {
+                model_artifact_id: model.artifact_id.clone(),
+                model_trained_through: model.trained_through.to_string(),
                 pitcher_id: card.pitcher_id,
                 pitcher_name: card.pitcher_name.clone(),
                 target_game_date: card.target_game_date.clone(),
@@ -114,11 +124,19 @@ mod tests {
     #[test]
     fn records_predictions_without_duplicate_keys() {
         let root = std::env::temp_dir().join(format!("pns-tracking-{}", std::process::id()));
-        let cards = crate::score_date_fixture("2026-07-16").unwrap();
-        super::record_predictions(&cards, &root).unwrap();
-        super::record_predictions(&cards, &root).unwrap();
+        let cards = crate::score_date_fixture("2026-07-17").unwrap();
+        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
+        let model = crate::model::artifact::ModelArtifact::train(&starts)
+            .unwrap()
+            .info();
+        super::record_predictions(&cards, &model, &root).unwrap();
+        super::record_predictions(&cards, &model, &root).unwrap();
         let rows = super::read_history(&root).unwrap();
         assert_eq!(rows.len(), cards.len());
+        assert!(
+            rows.iter()
+                .all(|row| row.model_artifact_id == model.artifact_id)
+        );
         std::fs::remove_dir_all(root).ok();
     }
 }

@@ -3,10 +3,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nth(1)
         .ok_or("usage: cargo run -p pns-core --example score_live -- YYYY-MM-DD")?;
     let slate = pns_core::score_date_detailed(&date)?;
-    let cards = slate.cards;
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let export_path = pns_core::export_predictions(&cards, &root)?;
-    println!("scored {} MLB probable starters for {date}", cards.len());
+    let export_path =
+        pns_core::export_predictions_with_model(&slate.cards, Some(&slate.model), &root)?;
+    println!(
+        "scored {} MLB probable starters for {date} with {}",
+        slate.cards.len(),
+        slate.model.artifact_id
+    );
     println!("exported {}", export_path.display());
     println!(
         "walk-forward: {} rows across {} dates; FIP MAE {:.3}; runs MAE {:.3}; raw/calibrated 90% run-band coverage {:.1}%/{:.1}% (scale {:.3})",
@@ -29,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.join("outputs/validation.json"),
         serde_json::to_string_pretty(&slate.validation)?,
     )?;
-    for card in cards {
+    for card in slate.cards {
         println!(
             "{}: FIP {:.2}, runs {:.2}/{:.2}/{:.2}, {:?}",
             card.pitcher_name,

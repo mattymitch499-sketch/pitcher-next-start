@@ -3,6 +3,26 @@ use crate::{PnsError, Result};
 use chrono::NaiveDate;
 use std::collections::BTreeMap;
 
+pub const FEATURE_SCHEMA_VERSION: u32 = 1;
+pub const FEATURE_NAMES: [&str; 16] = [
+    "intercept",
+    "recent_k_rate",
+    "recent_bb_rate",
+    "recent_hr_per_9",
+    "recent_whip",
+    "recent_er_per_9",
+    "recent_ground_ball_pct",
+    "recent_fastball_velocity",
+    "home",
+    "park_factor",
+    "opponent_offense_factor",
+    "rest_days",
+    "starts_used",
+    "recent_innings_per_start",
+    "recent_strikeouts_per_start",
+    "recent_pitch_count",
+];
+
 #[derive(Debug, Clone)]
 pub struct FeatureRow {
     pub pitcher_id: u32,

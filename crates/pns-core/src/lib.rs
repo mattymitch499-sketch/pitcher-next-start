@@ -11,16 +11,20 @@ use std::path::{Path, PathBuf};
 
 pub use card::{Confidence, DecisionCard, Projection};
 pub use error::{PnsError, Result};
+pub use model::artifact::ModelInfo;
 
 #[derive(Debug, serde::Serialize)]
 pub struct ScoredSlate {
     pub cards: Vec<DecisionCard>,
     pub validation: model::ValidationMetrics,
+    pub model: ModelInfo,
     pub generated_at: String,
 }
 
 #[derive(serde::Serialize)]
 struct PredictionCsv<'a> {
+    model_artifact_id: Option<&'a str>,
+    model_trained_through: Option<String>,
     pitcher_id: u32,
     pitcher_name: &'a str,
     pitcher_team: &'a str,
@@ -52,9 +56,11 @@ struct PredictionCsv<'a> {
     team_model_input: Option<f64>,
 }
 
-impl<'a> From<&'a DecisionCard> for PredictionCsv<'a> {
-    fn from(card: &'a DecisionCard) -> Self {
+impl<'a> PredictionCsv<'a> {
+    fn new(card: &'a DecisionCard, model: Option<&'a ModelInfo>) -> Self {
         Self {
+            model_artifact_id: model.map(|info| info.artifact_id.as_str()),
+            model_trained_through: model.map(|info| info.trained_through.to_string()),
             pitcher_id: card.pitcher_id,
             pitcher_name: &card.pitcher_name,
             pitcher_team: &card.pitcher_team_name,
@@ -97,6 +103,13 @@ pub fn score_date(date: &str) -> Result<Vec<DecisionCard>> {
 pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
     let target_date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| PnsError::Feature(format!("invalid date {date}: {e}")))?;
+    let artifact = load_model_artifact()?;
+    if target_date <= artifact.training.data_through {
+        return Err(PnsError::Model(format!(
+            "model artifact {} was trained through {}; choose a later slate or train a leakage-safe historical artifact",
+            artifact.artifact_id, artifact.training.data_through
+        )));
+    }
     let client = data::MlbStatsClient::new()?;
     let mut contexts = client.probable_starters(target_date)?;
     let pitcher_ids: Vec<_> = contexts.iter().map(|context| context.pitcher_id).collect();
@@ -152,16 +165,6 @@ pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
             failures.join("; ")
         )));
     }
-    let historical = if let Some(dataset_path) = find_training_dataset() {
-        data::dataset::read_csv(dataset_path)?
-    } else {
-        data::dataset::read_csv_text(include_str!("../../../data/processed/training_starts.csv"))?
-    };
-    starts.extend(
-        historical
-            .into_iter()
-            .filter(|row| row.game_date < target_date),
-    );
     let deduplicated: BTreeMap<_, _> = starts
         .into_iter()
         .map(|row| ((row.pitcher_id, row.game_pk), row))
@@ -177,45 +180,45 @@ pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
         .filter_map(|row| row.pitch_hand.map(|hand| (row.pitcher_id, hand)))
         .collect();
     data::enrich::enrich_historical_context(&mut starts, &all_hands);
-    score_normalized_detailed(&starts, &contexts)
+    score_normalized_detailed(&starts, &contexts, &artifact)
 }
 
-fn find_training_dataset() -> Option<PathBuf> {
-    if let Ok(path) = std::env::var("PNS_TRAINING_DATA") {
+fn find_model_artifact() -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PNS_MODEL_ARTIFACT") {
         let path = PathBuf::from(path);
-        if path.exists() {
-            return Some(path);
-        }
+        return Some(path);
     }
     let current = std::env::current_dir().ok()?;
     [
-        current.join("data/processed/training_starts.csv"),
-        current.join("../data/processed/training_starts.csv"),
+        current.join("models/pns-model-v1.json"),
+        current.join("../models/pns-model-v1.json"),
     ]
     .into_iter()
     .find(|path| path.exists())
 }
 
+fn load_model_artifact() -> Result<model::artifact::ModelArtifact> {
+    if let Some(path) = find_model_artifact() {
+        return model::artifact::ModelArtifact::load(path);
+    }
+    model::artifact::ModelArtifact::from_json(include_str!("../../../models/pns-model-v1.json"))
+}
+
+#[cfg(test)]
 fn score_normalized(
     starts: &[data::types::PitcherStartLog],
     contexts: &[data::types::NextStartContext],
+    artifact: &model::artifact::ModelArtifact,
 ) -> Result<Vec<DecisionCard>> {
-    Ok(score_normalized_detailed(starts, contexts)?.cards)
+    Ok(score_normalized_detailed(starts, contexts, artifact)?.cards)
 }
 
 fn score_normalized_detailed(
     starts: &[data::types::PitcherStartLog],
     contexts: &[data::types::NextStartContext],
+    artifact: &model::artifact::ModelArtifact,
 ) -> Result<ScoredSlate> {
-    let training = features::historical_rows(starts, 5)?;
-    let minimum_training_rows = (training.len() / 2).max(10).min(training.len() - 1);
-    let validation = model::walk_forward_validate(&training, minimum_training_rows)?;
-    let model = model::BayesianLinearModel::fit(&training)?
-        .with_interval_scale(validation.recommended_interval_scale)
-        .with_aux_interval_scales(
-            validation.recommended_strikeouts_interval_scale,
-            validation.recommended_innings_interval_scale,
-        );
+    artifact.validate()?;
     let cards: Vec<_> = contexts
         .iter()
         .filter_map(|context| {
@@ -223,13 +226,13 @@ fn score_normalized_detailed(
                 Ok(row) => row,
                 Err(_) => return None,
             };
-            Some(model.score(&row).map(|projection| {
+            Some(artifact.score(&row).map(|projection| {
                 card::build_card(
                     context,
                     projection,
                     &row,
                     starts,
-                    validation.confidence_calibration,
+                    artifact.validation.confidence_calibration,
                 )
             }))
         })
@@ -241,12 +244,17 @@ fn score_normalized_detailed(
     }
     Ok(ScoredSlate {
         cards,
-        validation,
+        validation: artifact.validation,
+        model: artifact.info(),
         generated_at: chrono::Utc::now().to_rfc3339(),
     })
 }
 
 pub fn score_date_fixture(date: &str) -> Result<Vec<DecisionCard>> {
+    Ok(score_date_fixture_detailed(date)?.cards)
+}
+
+pub fn score_date_fixture_detailed(date: &str) -> Result<ScoredSlate> {
     let target_date = chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d")
         .map_err(|e| PnsError::Feature(format!("invalid date {date}: {e}")))?;
     let starts = data::pitcher_logs::fixture_starts()?;
@@ -282,17 +290,32 @@ pub fn score_date_fixture(date: &str) -> Result<Vec<DecisionCard>> {
             pitcher_hand: Some('L'),
         },
     ];
-    score_normalized(&starts, &contexts)
+    let artifact = load_model_artifact()?;
+    score_normalized_detailed(&starts, &contexts, &artifact)
 }
 
 pub fn export_predictions(cards: &[DecisionCard], root: impl AsRef<Path>) -> Result<PathBuf> {
+    export_predictions_with_model(cards, None, root)
+}
+
+pub fn export_predictions_with_model(
+    cards: &[DecisionCard],
+    model: Option<&ModelInfo>,
+    root: impl AsRef<Path>,
+) -> Result<PathBuf> {
     let output_dir = root.as_ref().join("outputs");
     let cards_dir = output_dir.join("cards");
     std::fs::create_dir_all(&cards_dir)?;
+    for entry in std::fs::read_dir(&cards_dir)? {
+        let path = entry?.path();
+        if path.extension().is_some_and(|extension| extension == "md") {
+            std::fs::remove_file(path)?;
+        }
+    }
     let csv_path = output_dir.join("predictions.csv");
     let mut writer = csv::Writer::from_path(&csv_path)?;
     for card in cards {
-        writer.serialize(PredictionCsv::from(card))?;
+        writer.serialize(PredictionCsv::new(card, model))?;
         let slug = card.pitcher_name.to_lowercase().replace([' ', '.'], "-");
         std::fs::write(
             cards_dir.join(format!("{slug}.md")),
@@ -307,7 +330,7 @@ pub fn export_predictions(cards: &[DecisionCard], root: impl AsRef<Path>) -> Res
 mod tests {
     #[test]
     fn scores_and_exports_two_fixture_pitchers() {
-        let cards = super::score_date_fixture("2026-07-16").unwrap();
+        let cards = super::score_date_fixture("2026-07-17").unwrap();
         assert_eq!(cards.len(), 2);
         assert!(cards.iter().all(|card| card.starts_used == 5));
         assert!(cards.iter().all(|card| card.recent_k_rate > 0.0));
@@ -342,5 +365,41 @@ mod tests {
         let root = std::env::temp_dir().join("pns-core-export-test");
         let path = super::export_predictions(&cards, &root).unwrap();
         assert!(path.exists());
+    }
+
+    #[test]
+    fn frozen_artifact_scores_are_independent_of_unrelated_history() {
+        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
+        let artifact = crate::model::artifact::ModelArtifact::train(&starts).unwrap();
+        let target_date = chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap();
+        let context = crate::data::types::NextStartContext {
+            pitcher_id: 660271,
+            pitcher_name: "Fixture Ace".into(),
+            game_date: target_date,
+            opponent_id: 147,
+            home_team_id: 120,
+            home: true,
+            park_factor: 1.0,
+            opponent_offense: 1.0,
+            pitcher_team_name: "Fixture Club".into(),
+            opponent_team_name: "Fixture Opponent".into(),
+            venue_name: "Fixture Park".into(),
+            game_time: None,
+            pitcher_hand: Some('R'),
+        };
+        let first = super::score_normalized(&starts, std::slice::from_ref(&context), &artifact)
+            .unwrap()
+            .remove(0);
+        let mut expanded = starts.clone();
+        let mut unrelated = starts[0].clone();
+        unrelated.pitcher_id = 999_999;
+        unrelated.game_pk = 999_999;
+        expanded.push(unrelated);
+        let second = super::score_normalized(&expanded, &[context], &artifact)
+            .unwrap()
+            .remove(0);
+        assert_eq!(first.projected_fip, second.projected_fip);
+        assert_eq!(first.expected_runs_base, second.expected_runs_base);
+        assert_eq!(first.confidence, second.confidence);
     }
 }

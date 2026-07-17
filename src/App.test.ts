@@ -27,7 +27,7 @@ const metrics: Validation = {held_out_rows:100,held_out_dates:10,fip_mae:2,runs_
   league_strikeouts_mae:2,pitcher_history_strikeouts_mae:1.9,last_five_strikeouts_mae:2.1,league_innings_mae:1.1,pitcher_history_innings_mae:1,last_five_innings_mae:1.2,
   confidence_calibration:{high_max_normalized_epistemic_score:.1,medium_max_normalized_epistemic_score:.2,threshold_training_rows:70,training_period_dates:7,tiers_validated:true,minimum_audit_rows_per_tier:100,required_mae_ratio:.95},
   confidence_audit:{rows:35,dates:3,high:{rows:10,runs_mae:1.2},medium:{rows:10,runs_mae:1.5},low:{rows:10,runs_mae:1.8},short_history:{rows:5,runs_mae:2.1}}};
-const slate: ScoredSlate = {cards:[card(1,'Alpha Pitcher','Brewers'),card(2,'Beta Pitcher','Cubs')],validation:metrics,generated_at:'2026-07-16T12:00:00Z'};
+const slate: ScoredSlate = {cards:[card(1,'Alpha Pitcher','Brewers'),card(2,'Beta Pitcher','Cubs')],validation:metrics,model:{artifact_id:'pns-blr-v1-2025-09-28',schema_version:1,trained_through:'2025-09-28',training_rows:1000},generated_at:'2026-07-16T12:00:00Z'};
 
 describe('projection workflow', () => {
   beforeEach(() => invoke.mockReset());
@@ -68,7 +68,7 @@ describe('projection workflow', () => {
     missingMae.confidence_audit.high.runs_mae = null;
     render(ValidationPage, { metrics: missingMae, history: [], onreconcile: vi.fn() });
     expect(screen.getByRole('heading', { name: /confidence tier audit/i })).toBeTruthy();
-    expect(screen.getByText('Gate failed · high withheld')).toBeTruthy();
+    expect(screen.getAllByText(/not reliable on later games/i).length).toBeGreaterThan(0);
     expect(screen.getByText('—')).toBeTruthy();
   });
 });

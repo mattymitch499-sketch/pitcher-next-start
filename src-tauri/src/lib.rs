@@ -9,7 +9,7 @@ fn writable_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
 fn score_date(app: tauri::AppHandle, date: String) -> Result<ScoredSlate, String> {
     let slate = pns_core::score_date_detailed(&date).map_err(|error| error.to_string())?;
     let root = writable_root(&app)?;
-    pns_core::tracking::record_predictions(&slate.cards, root)
+    pns_core::tracking::record_predictions(&slate.cards, &slate.model, root)
         .map_err(|error| error.to_string())?;
     Ok(slate)
 }
@@ -31,9 +31,13 @@ fn reconcile_prediction_history(
 }
 
 #[tauri::command]
-fn export_predictions(app: tauri::AppHandle, cards: Vec<DecisionCard>) -> Result<String, String> {
+fn export_predictions(
+    app: tauri::AppHandle,
+    cards: Vec<DecisionCard>,
+    model: Option<pns_core::ModelInfo>,
+) -> Result<String, String> {
     let root = writable_root(&app)?;
-    pns_core::export_predictions(&cards, root)
+    pns_core::export_predictions_with_model(&cards, model.as_ref(), root)
         .map(|path| path.display().to_string())
         .map_err(|error| error.to_string())
 }

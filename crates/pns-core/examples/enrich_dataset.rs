@@ -2,8 +2,29 @@ use std::collections::{BTreeSet, HashMap};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let path = root.join("data/processed/training_starts.csv");
-    let mut rows = pns_core::data::dataset::read_csv(&path)?;
+    let mut args = std::env::args().skip(1);
+    let input = args
+        .next()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.join("data/processed/training_starts.csv"));
+    let output = args
+        .next()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| input.clone());
+    let seed = args.next().map(std::path::PathBuf::from);
+    let mut rows = pns_core::data::dataset::read_csv(&input)?;
+    if let Some(seed) = seed {
+        let velocities: HashMap<_, _> = pns_core::data::dataset::read_csv(seed)?
+            .into_iter()
+            .filter_map(|row| {
+                row.avg_fb_velo
+                    .map(|velocity| ((row.pitcher_id, row.game_pk), velocity))
+            })
+            .collect();
+        for row in &mut rows {
+            row.avg_fb_velo = velocities.get(&(row.pitcher_id, row.game_pk)).copied();
+        }
+    }
     let all_pitcher_ids: Vec<u32> = rows
         .iter()
         .map(|row| row.pitcher_id)
@@ -17,30 +38,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         hands.extend(client.pitcher_hands(chunk)?);
     }
     pns_core::data::enrich::enrich_historical_context(&mut rows, &hands);
-
     let start = rows
         .iter()
+        .filter(|row| row.avg_fb_velo.is_none())
         .map(|row| row.game_date)
         .min()
-        .ok_or("dataset is empty")?;
+        .ok_or("dataset has no rows requiring velocity enrichment")?;
     let end = rows
         .iter()
         .map(|row| row.game_date)
         .max()
         .ok_or("dataset is empty")?;
-    let mut failed = 0usize;
-    let requested_ids: Vec<u32> = std::env::args()
-        .skip(1)
-        .map(|value| value.parse())
-        .collect::<Result<_, _>>()?;
-    let pitcher_ids = if requested_ids.is_empty() {
-        all_pitcher_ids
-    } else {
-        requested_ids
-    };
-    for chunk in pitcher_ids.chunks(8) {
+    let mut failures = Vec::new();
+    let pitcher_ids: Vec<_> = rows
+        .iter()
+        .filter(|row| row.avg_fb_velo.is_none())
+        .map(|row| row.pitcher_id)
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    for (chunk_index, chunk) in pitcher_ids.chunks(8).enumerate() {
+        eprintln!(
+            "velocity enrichment: batch {}/{} ({} pitchers remaining)",
+            chunk_index + 1,
+            pitcher_ids.len().div_ceil(8),
+            pitcher_ids.len().saturating_sub(chunk_index * 8)
+        );
         let results: Vec<_> = std::thread::scope(|scope| {
-            let handles: Vec<_> = chunk
+            chunk
                 .iter()
                 .map(|&pitcher_id| {
                     let client = client.clone();
@@ -51,8 +76,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         )
                     })
                 })
-                .collect();
-            handles
+                .collect::<Vec<_>>()
                 .into_iter()
                 .map(|handle| handle.join().expect("Savant worker panicked"))
                 .collect()
@@ -62,21 +86,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(velocities) => {
                     pns_core::data::enrich::join_velocity(&mut rows, pitcher_id, &velocities)
                 }
-                Err(error) => {
-                    failed += 1;
-                    eprintln!("velocity enrichment failed for {pitcher_id}: {error}");
-                }
+                Err(error) => failures.push(format!("{pitcher_id}: {error}")),
             }
         }
     }
-    pns_core::data::dataset::write_csv(&rows, &path)?;
+    if !failures.is_empty() {
+        return Err(format!(
+            "refusing to write partial enrichment; {} requests failed: {}",
+            failures.len(),
+            failures.join("; ")
+        )
+        .into());
+    }
     let velocity_rows = rows.iter().filter(|row| row.avg_fb_velo.is_some()).count();
+    let coverage = velocity_rows as f64 / rows.len() as f64;
+    if coverage < 0.98 {
+        return Err(format!(
+            "refusing to write enrichment with {:.2}% velocity coverage",
+            coverage * 100.0
+        )
+        .into());
+    }
+    pns_core::data::dataset::write_csv(&rows, &output)?;
     println!(
-        "enriched {} rows; velocity available for {} ({:.1}%); {} pitcher requests failed",
+        "enriched {} rows through {end}; velocity coverage {:.2}%",
         rows.len(),
-        velocity_rows,
-        velocity_rows as f64 * 100.0 / rows.len() as f64,
-        failed
+        coverage * 100.0
     );
     Ok(())
 }

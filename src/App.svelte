@@ -3,7 +3,7 @@
   import Learn from './Learn.svelte';
   import PitcherDetail from './PitcherDetail.svelte';
   import ValidationPage from './Validation.svelte';
-  import type { Card, Validation, ScoredSlate, TrackedPrediction } from './types';
+  import type { Card, ModelInfo, Validation, ScoredSlate, TrackedPrediction } from './types';
 
   let page: 'projections' | 'learn' | 'pitcher' | 'validation' = 'projections';
   let selectedCard: Card | null = null;
@@ -14,21 +14,29 @@
   let notice = '';
   let running = false;
   let generatedAt = '';
+  let model: ModelInfo | null = null;
   let search = '';
   let team = 'all';
   let history: TrackedPrediction[] = [];
   let reconciling = false;
+  const modelFreshness = () => {
+    if (!model) return { stale: false, label: 'Model training', value: 'Loads on run', detail: '' };
+    const cutoff = new Date(`${model.trained_through}T00:00:00`);
+    const slate = new Date(`${date}T00:00:00`);
+    const stale = cutoff.getUTCFullYear() < slate.getUTCFullYear();
+    return { stale, label: stale ? 'Model refresh needed' : 'Model trained through', value: cutoff.toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric',timeZone:'UTC'}), detail: model.artifact_id };
+  };
 
   async function score() {
     running = true; error = ''; notice = '';
-    try { const result = await invoke<ScoredSlate>('score_date', { date }); cards = result.cards; validation = result.validation; generatedAt = result.generated_at; search = ''; team = 'all'; }
+    try { const result = await invoke<ScoredSlate>('score_date', { date }); cards = result.cards; validation = result.validation; model = result.model; generatedAt = result.generated_at; search = ''; team = 'all'; }
     catch (cause) { error = String(cause); }
     finally { running = false; }
   }
 
   async function exportCsv() {
     error = ''; notice = '';
-    try { notice = `Exported to ${await invoke<string>('export_predictions', { cards })}`; }
+    try { notice = `Exported to ${await invoke<string>('export_predictions', { cards, model })}`; }
     catch (cause) { error = String(cause); }
   }
   function openPitcher(card: Card) { selectedCard = card; page = 'pitcher'; window.scrollTo(0, 0); }
@@ -70,7 +78,7 @@
       <section class="control-bar" aria-label="Projection controls">
         <div class="date-field"><label for="date">Slate date</label><input id="date" type="date" bind:value={date}></div>
         <div class="control-note"><span>Data source</span><b>MLB Stats API</b></div>
-        <div class="control-note"><span>Rolling window</span><b>Last 5 starts</b></div>
+        <div class="control-note model-freshness" class:stale={modelFreshness().stale}><span>{modelFreshness().label}</span><b>{modelFreshness().value}</b>{#if modelFreshness().detail}<small title={modelFreshness().detail}>{modelFreshness().detail}</small>{/if}</div>
         <button class="run-button" onclick={score} disabled={running}>{running ? 'Running model…' : 'Run projections'} <span>→</span></button>
       </section>
 

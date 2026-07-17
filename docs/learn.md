@@ -60,6 +60,8 @@ Intuition:
 
 Four independent Bayesian linear regressions: next-start FIP, runs allowed, innings pitched, and strikeouts. They share a feature pipeline but have separate coefficients, priors, observation noise, and posteriors.
 
+Training and scoring are deliberately separate. Walk-forward validation and final fitting produce a versioned model artifact with the four posteriors, standardization values, interval calibration, confidence audit, feature contract, and training cutoff. A daily slate loads that frozen artifact and builds only the probable starters' live feature rows, so unrelated slate composition cannot change the fitted model or confidence boundaries.
+
 ### Observation model
 
 For each historical next-start row \(i\):
@@ -186,7 +188,7 @@ The run interval is calibrated from walk-forward residuals. The model first meas
 
 ### Current measured baseline check
 
-The 2023–2025 processed dataset contains 13,821 normalized starts. Walk-forward validation scores FIP, runs, innings, and strikeouts only on future dates. The app reports separate MAE values for the innings and strikeout models alongside the existing FIP and runs validation. This remains model evidence rather than proof of a betting edge, so the app does not emit automatic prop recommendations.
+The processed dataset contains 16,477 normalized starts from 2023 through completed games on July 16, 2026. Walk-forward validation scores FIP, runs, innings, and strikeouts only on future dates. The app reports separate MAE values for the innings and strikeout models alongside the existing FIP and runs validation. This remains model evidence rather than proof of a betting edge, so the app does not emit automatic prop recommendations.
 
 ---
 

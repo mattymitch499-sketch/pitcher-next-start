@@ -1,52 +1,85 @@
-# Calibrate confidence labels
+# Versioned model artifacts
 
-- [x] Define a leakage-safe confidence score from normalized epistemic run uncertainty and recent-start sample strength.
-- [x] Learn candidate high/medium cutoffs from earlier walk-forward predictions instead of hard-coded run widths.
-- [x] Audit candidate tiers on later dates and withhold them when accuracy does not separate monotonically.
-- [x] Carry calibration and audit metadata through the production scoring pipeline.
-- [x] Add focused Rust tests for cutoff calculation, zero-boundary behavior, training-size normalization, validation gating, and card fallback.
-- [x] Update Learn and validation UI language with the exact method and current withheld status.
-- [x] Regenerate validation and sample projection outputs.
-- [x] Run formatting, Rust tests, frontend checks/tests, and production build.
-- [x] Review the final diff for correctness, leakage, simplicity, and unnecessary changes; refactor findings.
+## Smoke-test follow-up: explanation and 2026 freshness
 
-## Review
+- [x] Rework the player page so the favorable case, risk case, and overall model read are explicit above the technical details.
+- [x] Replace the dashboard's artifact-ID-first label with a human-readable trained-through/freshness message; keep the ID as secondary provenance.
+- [x] Update the canonical normalized dataset through the latest completed 2026 games using the existing baseballr-compatible Rust path.
+- [x] Retrain and validate a new artifact, then regenerate outputs and update displayed provenance.
+- [x] Run the full review and verification suite before committing.
 
-The original fixed thresholds were removed. Total predictive variance remains the source of the displayed run interval, while confidence candidates use epistemic uncertainty normalized for model training size and penalized for histories shorter than five starts. The first 70% of walk-forward dates trains candidate percentile boundaries; the final 30% audits them.
+### Smoke-test follow-up review
 
-Current audit separates 820 later-date five-start rows from 20 short-history rows. Candidate high/medium/low run MAE is 1.666/1.507/1.624, so the candidate tiers do not validate. Short-history run MAE is 1.830. The gate therefore withholds high confidence; complete five-start histories inside the candidate-medium uncertainty boundary are medium, while unusually uncertain or shorter histories are low.
+- Live probable starters and recent pitcher histories were already current; only the trained artifact was stale.
+- The canonical dataset now contains 16,477 starts through 2026-07-16 with 98.44% fastball-velocity coverage. Missing velocity uses the tested neutral imputation.
+- The promoted artifact is `pns-blr-v1-2026-07-16-d8861f625b8d`; a second independent training run produced identical bytes.
+- Refresh tooling now supports an explicit cutoff and staged output, refuses request failures, enforces a coverage floor, reuses prior velocity enrichment, and reports batch progress.
+- The first player-page explanation treatment conflicted with the editorial theme. It was replaced with a compact light full-width model case, and the four-card grid now includes a Model track record panel.
 
-Verification passed: 21 Rust tests, strict Clippy, Svelte diagnostics, 4 frontend tests, Vite production build, Rust formatting, and diff whitespace checks. The historical 2025-07-12 slate and validation artifacts were regenerated successfully with 18 medium and 10 low cards.
+## Goal
+
+Separate leakage-safe model training and validation from daily slate scoring. Training produces one deterministic, versioned artifact containing the four fitted Bayesian models, feature standardization, interval calibration, confidence calibration/audit, and training provenance. Scoring loads that frozen artifact and only builds live next-start features.
+
+## Contract
+
+- Artifact format: human-inspectable JSON at `models/pns-model-v1.json`.
+- Schema version: explicit integer checked before any model data is used.
+- Feature contract: persist the ordered feature names and reject a mismatch in count, order, or name.
+- Training provenance: training row count, first/last target date, normalized-data SHA-256, and validation configuration. Volatile creation timestamps are deliberately excluded so identical training input produces identical bytes.
+- Model state: posterior mean/covariance/noise variance for FIP, runs, strikeouts, and innings; feature means/scales; all interval multipliers.
+- Validation state: complete walk-forward metrics, confidence thresholds, and later-date audit used by cards and the Validation page.
+- Runtime behavior: live scoring fails clearly if the artifact is missing, malformed, unsupported, or incompatible. It must not silently retrain or substitute unvalidated values.
+- Reproducibility: the same artifact and normalized scoring inputs must produce the same numeric projections and confidence labels regardless of unrelated slate rows.
+- Architecture: serialization and invariant validation live in `pns-core`; Tauri remains a thin wrapper and Svelte only displays artifact provenance.
+
+## Implementation plan
+
+- [x] Add serializable/deserializable model and validation state with invariant checks for finite values, matrix dimensions, standardizer widths, interval scales, confidence thresholds, and audit configuration.
+- [x] Add a `ModelArtifactV1` envelope with schema version, feature contract, training provenance, model state, and validation metrics.
+- [x] Add deterministic JSON save/load APIs using safe same-directory replacement semantics for writes.
+- [x] Add a training entry point and example that reads normalized history, builds leakage-safe rows, validates, fits, and writes `models/pns-model-v1.json`.
+- [x] Refactor normalized scoring so it accepts a loaded artifact and does not run validation or fit a model.
+- [x] Make live scoring locate the artifact via `PNS_MODEL_ARTIFACT` first, then repository-relative paths, with an embedded release artifact for packaged builds.
+- [x] Keep an explicit train-and-score helper only for artifact training/tests; do not use it in the production Tauri command.
+- [x] Add artifact provenance to `ScoredSlate`, CSV export, prediction history, TypeScript types, and a compact UI status/readout.
+- [x] Add tests for numeric round trips, deterministic generation, unsupported schema, malformed dimensions/values, feature-contract mismatch, missing artifacts, cutoff leakage, and slate-invariant scoring.
+- [x] Generate the v1 artifact from the canonical processed dataset.
+- [x] Update README, tech spec, and Learn documentation to distinguish training/calibration from daily scoring.
+- [x] Regenerate sample predictions and validation output from the frozen artifact.
+
+## Verification
+
+- [x] `cargo fmt --all --check`
+- [x] `cargo test --workspace`
+- [x] `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+- [x] `pnpm check`
+- [x] `pnpm test -- --run`
+- [x] `pnpm build`
+- [x] Train the final artifact twice and prove byte-identical output; both files hashed to `37501765fbede5e1134b2cb9b070b99d9e40957125d78e32426a5a87e3e702ab`.
+- [x] Score the fixture slate from the artifact and compare results across an unrelated-slate perturbation.
+- [x] Inspect generated artifact, validation JSON, predictions CSV, and UI provenance manually.
 
 ## Pre-commit code review
 
-- [x] Review Rust calibration, gating, and fallback logic for correctness and edge cases.
-- [x] Review Rust/Svelte serialization and UI states.
-- [x] Review generated artifacts, documentation, and task completeness.
-- [x] Run static analysis and inspect the complete diff.
-- [x] Record findings and recommended fixes before committing.
+- [x] Review serialization boundaries and compatibility errors.
+- [x] Review leakage and training-cutoff provenance.
+- [x] Review production path for accidental retraining or fallback.
+- [x] Review Rust/Tauri/Svelte contract changes.
+- [x] Refactor any unnecessary duplication or overly broad changes.
+- [x] Record findings and fixes below before committing.
 
-### Resolved findings
+## Review
 
-- Conservative fallback now sends extreme/non-finite uncertainty to low instead of making every five-start row medium.
-- High and medium now require exactly five starts, matching the calibrated population.
-- Five-start candidate tiers and short histories are audited separately.
-- Learn-page metrics match the regenerated validation report.
-- Non-finite scores and invalid/nonnegative threshold ordering are rejected defensively.
-- Pitcher Detail handles validated, withheld, and unavailable states; frontend tests cover withheld/null states.
-- README and tech spec describe the normalized epistemic/audit design.
-- Strict Clippy is clean across the workspace.
+The production path now loads a checked artifact before network work, rejects incompatible overrides, and refuses to score on or before the artifact cutoff. The v1 artifact contains four Bayesian posteriors, the exact 16-feature contract, standardization, calibrated intervals, confidence audit, validation metrics, and normalized-data fingerprint. Artifact IDs combine schema, cutoff, and that fingerprint.
 
-Deferred follow-up: persist confidence calibration as a versioned model artifact instead of recomputing it with each slate's assembled corpus. This is an architectural improvement, not a correctness blocker for the current pipeline.
+Review findings resolved:
 
-### Review fixes
+- Added the training-cutoff guard after review found that retrospective dates could otherwise leak later outcomes.
+- Added a normalized-data SHA-256 to disambiguate corrected datasets with the same cutoff.
+- Added cross-field row-count, validation-range, covariance-shape/symmetry, diagonal, and finite-value checks.
+- Made replacement files unique and added a platform-safe replace/rollback path.
+- Persisted model artifact ID/cutoff in prediction history and CSV exports.
+- Corrected missing fastball velocity imputation after regenerated fixtures exposed that the old zero sentinel became an extreme standardized value.
+- Cleared stale card artifacts during regeneration so `outputs/cards/` matches `outputs/predictions.csv`.
 
-- [x] Make fallback classification conservative for extreme/non-finite uncertainty.
-- [x] Enforce minimum history eligibility for high and medium confidence.
-- [x] Audit candidate five-start tiers against a matching five-start population and report short-history performance separately.
-- [x] Add calibration invariant checks and Rust regression tests.
-- [x] Correct UI states, stale Learn metrics, and canonical documentation.
-- [x] Add frontend coverage for withheld, unavailable, and null-audit states.
-- [x] Clear strict Clippy findings.
-- [x] Regenerate outputs and rerun the complete verification suite.
-- [x] Perform final post-fix review.
+Verification passed with 28 Rust tests, strict Clippy, Svelte diagnostics, 4 frontend tests, the Vite production build, deterministic artifact generation, fixture slate invariance, and regenerated two-pitcher sample outputs.

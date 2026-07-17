@@ -100,6 +100,9 @@ No model code reads raw API JSON directly.
 All modeling reads normalized tables only.  
 No modeling logic in frontend JS/Svelte.
 
+### [DECISION] Training and scoring use a versioned artifact boundary
+Training and walk-forward validation are explicit offline operations. They write a checked, versioned JSON artifact containing the fitted posteriors, ordered feature contract, standardization, interval calibration, confidence audit, and training provenance. Daily Tauri scoring loads the frozen artifact and never silently retrains or falls back from an invalid override.
+
 ## 3. Repository & Module Layout
 
 ```text

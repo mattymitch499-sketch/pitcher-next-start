@@ -1,14 +1,16 @@
 use crate::features::FeatureRow;
 use crate::{PnsError, Projection, Result};
 
-#[derive(Debug, Clone)]
+pub mod artifact;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Posterior {
     mean: Vec<f64>,
     covariance: Vec<Vec<f64>>,
     noise_variance: f64,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BayesianLinearModel {
     fip: Posterior,
     runs: Posterior,
@@ -22,7 +24,7 @@ pub struct BayesianLinearModel {
     training_row_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ValidationMetrics {
     pub held_out_rows: usize,
     pub held_out_dates: usize,
@@ -55,7 +57,7 @@ pub struct ValidationMetrics {
     pub confidence_audit: ConfidenceAudit,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub struct ConfidenceCalibration {
     pub high_max_normalized_epistemic_score: f64,
     pub medium_max_normalized_epistemic_score: f64,
@@ -88,13 +90,13 @@ impl ConfidenceCalibration {
     }
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct ConfidenceTierAudit {
     pub rows: usize,
     pub runs_mae: Option<f64>,
 }
 
-#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+#[derive(Debug, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
 pub struct ConfidenceAudit {
     pub rows: usize,
     pub dates: usize,
@@ -183,6 +185,129 @@ impl BayesianLinearModel {
             innings_posterior_sd: innings_sd,
         })
     }
+
+    fn validate(&self, feature_width: usize) -> Result<()> {
+        if self.feature_means.len() != feature_width
+            || self.feature_scales.len() != feature_width
+            || self.training_row_count < 4
+        {
+            return Err(PnsError::Model(
+                "artifact model metadata does not match the feature contract".into(),
+            ));
+        }
+        if self
+            .feature_means
+            .iter()
+            .chain(&self.feature_scales)
+            .any(|value| !value.is_finite())
+            || self.feature_scales.iter().any(|scale| *scale <= 0.0)
+            || !self.interval_scale.is_finite()
+            || !self.strikeouts_interval_scale.is_finite()
+            || !self.innings_interval_scale.is_finite()
+            || !(0.75..=2.0).contains(&self.interval_scale)
+            || !(0.75..=3.0).contains(&self.strikeouts_interval_scale)
+            || !(0.75..=3.0).contains(&self.innings_interval_scale)
+        {
+            return Err(PnsError::Model(
+                "artifact model contains invalid standardization or interval values".into(),
+            ));
+        }
+        for posterior in [&self.fip, &self.runs, &self.strikeouts, &self.innings] {
+            if posterior.mean.len() != feature_width
+                || posterior.covariance.len() != feature_width
+                || posterior
+                    .covariance
+                    .iter()
+                    .any(|row| row.len() != feature_width)
+                || !posterior.noise_variance.is_finite()
+                || posterior.noise_variance <= 0.0
+                || posterior.mean.iter().any(|value| !value.is_finite())
+                || posterior
+                    .covariance
+                    .iter()
+                    .flatten()
+                    .any(|value| !value.is_finite())
+                || posterior
+                    .covariance
+                    .iter()
+                    .enumerate()
+                    .any(|(index, row)| row[index] < 0.0)
+                || (0..feature_width).any(|row| {
+                    (0..feature_width).any(|column| {
+                        let left = posterior.covariance[row][column];
+                        let right = posterior.covariance[column][row];
+                        (left - right).abs() > 1e-10 * left.abs().max(right.abs()).max(1.0)
+                    })
+                })
+            {
+                return Err(PnsError::Model(
+                    "artifact posterior dimensions or values are invalid".into(),
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+impl ValidationMetrics {
+    fn validate(&self) -> Result<()> {
+        let metrics = [
+            self.fip_mae,
+            self.runs_mae,
+            self.strikeouts_mae,
+            self.innings_mae,
+            self.recommended_interval_scale,
+            self.recommended_strikeouts_interval_scale,
+            self.recommended_innings_interval_scale,
+            self.league_fip_mae,
+            self.pitcher_history_fip_mae,
+            self.last_five_fip_mae,
+            self.league_runs_mae,
+            self.pitcher_history_runs_mae,
+            self.last_five_runs_mae,
+            self.league_strikeouts_mae,
+            self.pitcher_history_strikeouts_mae,
+            self.last_five_strikeouts_mae,
+            self.league_innings_mae,
+            self.pitcher_history_innings_mae,
+            self.last_five_innings_mae,
+        ];
+        let coverage = [
+            self.runs_interval_coverage,
+            self.calibrated_runs_interval_coverage,
+            self.strikeouts_interval_coverage,
+            self.calibrated_strikeouts_interval_coverage,
+            self.innings_interval_coverage,
+            self.calibrated_innings_interval_coverage,
+        ];
+        if self.held_out_rows == 0
+            || self.held_out_dates == 0
+            || metrics
+                .iter()
+                .any(|value| !value.is_finite() || *value < 0.0)
+            || coverage
+                .iter()
+                .any(|value| !value.is_finite() || !(0.0..=1.0).contains(value))
+            || self.confidence_audit.rows
+                != self.confidence_audit.high.rows
+                    + self.confidence_audit.medium.rows
+                    + self.confidence_audit.low.rows
+            || [
+                self.confidence_audit.high.runs_mae,
+                self.confidence_audit.medium.runs_mae,
+                self.confidence_audit.low.runs_mae,
+                self.confidence_audit.short_history.runs_mae,
+            ]
+            .into_iter()
+            .flatten()
+            .any(|value| !value.is_finite() || value < 0.0)
+        {
+            return Err(PnsError::Model(
+                "model artifact validation metrics are internally inconsistent".into(),
+            ));
+        }
+        Ok(())
+    }
 }
 
 fn standardize_rows(rows: &[FeatureRow]) -> Result<(Vec<FeatureRow>, Vec<f64>, Vec<f64>)> {
@@ -197,13 +322,20 @@ fn standardize_rows(rows: &[FeatureRow]) -> Result<(Vec<FeatureRow>, Vec<f64>, V
     let mut means = vec![0.0; width];
     let mut scales = vec![1.0; width];
     for feature in 1..width {
-        means[feature] =
-            rows.iter().map(|row| row.values[feature]).sum::<f64>() / rows.len() as f64;
-        let variance = rows
+        let observed: Vec<_> = rows
             .iter()
-            .map(|row| (row.values[feature] - means[feature]).powi(2))
+            .map(|row| row.values[feature])
+            .filter(|value| feature != 7 || *value > 0.0)
+            .collect();
+        if observed.is_empty() {
+            continue;
+        }
+        means[feature] = observed.iter().sum::<f64>() / observed.len() as f64;
+        let variance = observed
+            .iter()
+            .map(|value| (*value - means[feature]).powi(2))
             .sum::<f64>()
-            / rows.len() as f64;
+            / observed.len() as f64;
         scales[feature] = if variance < 1e-8 {
             1.0
         } else {
@@ -234,6 +366,8 @@ fn standardize_values(values: &[f64], means: &[f64], scales: &[f64]) -> Result<V
         .map(|(index, value)| {
             if index == 0 {
                 *value
+            } else if index == 7 && *value <= 0.0 {
+                0.0
             } else {
                 (*value - means[index]) / scales[index]
             }
@@ -756,6 +890,18 @@ mod tests {
                     > projection.expected_runs_high - projection.expected_runs_low
             );
         }
+    }
+
+    #[test]
+    fn missing_velocity_is_imputed_to_the_training_mean() {
+        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
+        let mut rows = crate::features::historical_rows(&starts, 5).unwrap();
+        for (index, row) in rows.iter_mut().enumerate() {
+            row.values[7] = if index == 0 { 0.0 } else { 90.0 + index as f64 };
+        }
+        let (standardized, means, _) = super::standardize_rows(&rows).unwrap();
+        assert!(means[7] > 90.0);
+        assert_eq!(standardized[0].values[7], 0.0);
     }
 
     #[test]

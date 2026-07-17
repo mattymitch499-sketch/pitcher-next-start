@@ -10,7 +10,7 @@ use chrono::{Duration, NaiveDate};
 use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration as StdDuration, SystemTime};
 
 const BASE_URL: &str = "https://statsapi.mlb.com/api/v1";
@@ -219,7 +219,7 @@ fn cache_path(key: &str) -> PathBuf {
         .join(format!("{:016x}.cache", hasher.finish()))
 }
 
-fn cache_is_fresh(path: &PathBuf, ttl_seconds: u64) -> bool {
+fn cache_is_fresh(path: &Path, ttl_seconds: u64) -> bool {
     path.metadata()
         .and_then(|metadata| metadata.modified())
         .ok()

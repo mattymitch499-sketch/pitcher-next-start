@@ -19,6 +19,7 @@ pub struct BayesianLinearModel {
     innings_interval_scale: f64,
     feature_means: Vec<f64>,
     feature_scales: Vec<f64>,
+    training_row_count: usize,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize)]
@@ -50,6 +51,68 @@ pub struct ValidationMetrics {
     pub league_runs_mae: f64,
     pub pitcher_history_runs_mae: f64,
     pub last_five_runs_mae: f64,
+    pub confidence_calibration: ConfidenceCalibration,
+    pub confidence_audit: ConfidenceAudit,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct ConfidenceCalibration {
+    pub high_max_normalized_epistemic_score: f64,
+    pub medium_max_normalized_epistemic_score: f64,
+    pub threshold_training_rows: usize,
+    pub training_period_dates: usize,
+    pub tiers_validated: bool,
+    pub minimum_audit_rows_per_tier: usize,
+    pub required_mae_ratio: f64,
+}
+
+impl ConfidenceCalibration {
+    pub fn has_valid_thresholds(&self) -> bool {
+        self.high_max_normalized_epistemic_score.is_finite()
+            && self.medium_max_normalized_epistemic_score.is_finite()
+            && self.high_max_normalized_epistemic_score >= 0.0
+            && self.medium_max_normalized_epistemic_score >= 0.0
+            && self.high_max_normalized_epistemic_score
+                <= self.medium_max_normalized_epistemic_score
+    }
+
+    pub fn epistemic_score(
+        &self,
+        runs_epistemic_sd: f64,
+        model_training_rows: usize,
+        starts_used: usize,
+    ) -> f64 {
+        runs_epistemic_sd
+            * (model_training_rows.max(1) as f64).sqrt()
+            * (5.0 / starts_used.max(1) as f64).sqrt()
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ConfidenceTierAudit {
+    pub rows: usize,
+    pub runs_mae: Option<f64>,
+}
+
+#[derive(Debug, Clone, Copy, Default, serde::Serialize)]
+pub struct ConfidenceAudit {
+    pub rows: usize,
+    pub dates: usize,
+    pub high: ConfidenceTierAudit,
+    pub medium: ConfidenceTierAudit,
+    pub low: ConfidenceTierAudit,
+    /// Later-period rows with fewer than five prior starts. These are audited
+    /// separately because they cannot validate thresholds trained on full histories.
+    pub short_history: ConfidenceTierAudit,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ConfidenceObservation {
+    date: chrono::NaiveDate,
+    runs_epistemic_sd: f64,
+    starts_used: usize,
+    model_training_rows: usize,
+    absolute_error: f64,
 }
 
 impl BayesianLinearModel {
@@ -70,6 +133,7 @@ impl BayesianLinearModel {
             innings_interval_scale: 1.0,
             feature_means,
             feature_scales,
+            training_row_count: rows.len(),
         })
     }
 
@@ -86,10 +150,10 @@ impl BayesianLinearModel {
 
     pub fn score(&self, row: &FeatureRow) -> Result<Projection> {
         let values = standardize_values(&row.values, &self.feature_means, &self.feature_scales)?;
-        let (fip, fip_sd) = predict(&self.fip, &values)?;
-        let (runs, runs_sd) = predict(&self.runs, &values)?;
-        let (strikeouts, strikeouts_sd) = predict(&self.strikeouts, &values)?;
-        let (innings, innings_sd) = predict(&self.innings, &values)?;
+        let (fip, fip_sd, _) = predict(&self.fip, &values)?;
+        let (runs, runs_sd, runs_epistemic_sd) = predict(&self.runs, &values)?;
+        let (strikeouts, strikeouts_sd, _) = predict(&self.strikeouts, &values)?;
+        let (innings, innings_sd, _) = predict(&self.innings, &values)?;
         let half_width = 1.645 * runs_sd * self.interval_scale;
         let low = (runs - half_width).max(0.0);
         let high = (runs + half_width).max(low + 0.1);
@@ -103,10 +167,12 @@ impl BayesianLinearModel {
             expected_runs_base: runs.max(0.0),
             expected_runs_p75: (runs + quartile_width).max(0.0),
             expected_runs_high: high,
-            posterior_width: high - low,
+            posterior_width: 2.0 * half_width,
             starts_used: row.starts_used,
             fip_posterior_sd: fip_sd,
             runs_posterior_sd: runs_sd,
+            runs_epistemic_sd,
+            model_training_rows: self.training_row_count,
             expected_strikeouts: strikeouts.clamp(0.0, 15.0),
             expected_innings: innings.clamp(1.0, 9.0),
             expected_strikeouts_low: (strikeouts - strikeouts_half_width).max(0.0),
@@ -211,6 +277,7 @@ pub fn walk_forward_validate(
     let mut last_five_runs_error = 0.0;
     let mut held_out_rows = 0usize;
     let mut held_out_dates = 0usize;
+    let mut confidence_observations = Vec::new();
     let mut index = minimum_training_rows.max(4).min(ordered.len() - 1);
     let remaining_dates = ordered[index..]
         .iter()
@@ -313,6 +380,13 @@ pub fn walk_forward_validate(
                 (projection.expected_runs_base - runs).abs()
                     / projection.runs_posterior_sd.max(0.001),
             );
+            confidence_observations.push(ConfidenceObservation {
+                date: row.as_of,
+                runs_epistemic_sd: projection.runs_epistemic_sd,
+                starts_used: projection.starts_used,
+                model_training_rows: projection.model_training_rows,
+                absolute_error: (projection.expected_runs_base - runs).abs(),
+            });
             held_out_rows += 1;
         }
         held_out_dates += 1;
@@ -349,6 +423,8 @@ pub fn walk_forward_validate(
         .iter()
         .filter(|error| **error <= 1.645 * recommended_innings_interval_scale)
         .count();
+    let (confidence_calibration, confidence_audit) =
+        confidence_calibration(&confidence_observations)?;
     Ok(ValidationMetrics {
         held_out_rows,
         held_out_dates,
@@ -379,7 +455,138 @@ pub fn walk_forward_validate(
         league_runs_mae: league_runs_error / held_out_rows as f64,
         pitcher_history_runs_mae: pitcher_runs_error / held_out_rows as f64,
         last_five_runs_mae: last_five_runs_error / held_out_rows as f64,
+        confidence_calibration,
+        confidence_audit,
     })
+}
+
+fn confidence_calibration(
+    observations: &[ConfidenceObservation],
+) -> Result<(ConfidenceCalibration, ConfidenceAudit)> {
+    let dates: Vec<_> = observations
+        .iter()
+        .map(|observation| observation.date)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let training_date_count = (dates.len() * 7).div_ceil(10).max(1);
+    let training_through = dates[training_date_count.min(dates.len()) - 1];
+    let training: Vec<_> = observations
+        .iter()
+        .filter(|observation| observation.date <= training_through && observation.starts_used == 5)
+        .collect();
+    let mut scores: Vec<_> = training
+        .iter()
+        .map(|observation| {
+            observation.runs_epistemic_sd
+                * (observation.model_training_rows.max(1) as f64).sqrt()
+                * (5.0 / observation.starts_used.max(1) as f64).sqrt()
+        })
+        .collect();
+    scores.sort_by(f64::total_cmp);
+    if scores.is_empty() {
+        return Err(PnsError::Model(
+            "confidence calibration produced no training rows".into(),
+        ));
+    }
+    let mut calibration = ConfidenceCalibration {
+        high_max_normalized_epistemic_score: percentile(&scores, 0.33),
+        medium_max_normalized_epistemic_score: percentile(&scores, 0.67),
+        threshold_training_rows: training.len(),
+        training_period_dates: training_date_count.min(dates.len()),
+        tiers_validated: false,
+        minimum_audit_rows_per_tier: 100,
+        required_mae_ratio: 0.95,
+    };
+    let later_observations: Vec<_> = observations
+        .iter()
+        .filter(|observation| observation.date > training_through)
+        .collect();
+    let audit_observations: Vec<_> = later_observations
+        .iter()
+        .copied()
+        .filter(|observation| observation.starts_used == 5)
+        .collect();
+    let short_history: Vec<_> = later_observations
+        .iter()
+        .copied()
+        .filter(|observation| observation.starts_used < 5)
+        .collect();
+    let mut audit = ConfidenceAudit {
+        rows: audit_observations.len(),
+        dates: dates
+            .len()
+            .saturating_sub(calibration.training_period_dates),
+        ..ConfidenceAudit::default()
+    };
+    let mut high = Vec::new();
+    let mut medium = Vec::new();
+    let mut low = Vec::new();
+    for observation in audit_observations {
+        let score = calibration.epistemic_score(
+            observation.runs_epistemic_sd,
+            observation.model_training_rows,
+            observation.starts_used,
+        );
+        if score <= calibration.high_max_normalized_epistemic_score {
+            high.push(observation);
+        } else if score <= calibration.medium_max_normalized_epistemic_score {
+            medium.push(observation);
+        } else {
+            low.push(observation);
+        }
+    }
+    audit.high = audit_tier(&high);
+    audit.medium = audit_tier(&medium);
+    audit.low = audit_tier(&low);
+    audit.short_history = audit_tier(&short_history);
+    calibration.tiers_validated = tiers_are_validated(&audit, calibration);
+    Ok((calibration, audit))
+}
+
+fn tiers_are_validated(audit: &ConfidenceAudit, calibration: ConfidenceCalibration) -> bool {
+    if !calibration.has_valid_thresholds()
+        || !calibration.required_mae_ratio.is_finite()
+        || !(0.0..=1.0).contains(&calibration.required_mae_ratio)
+    {
+        return false;
+    }
+    let Some((high_mae, medium_mae, low_mae)) = audit
+        .high
+        .runs_mae
+        .zip(audit.medium.runs_mae)
+        .zip(audit.low.runs_mae)
+        .map(|((high, medium), low)| (high, medium, low))
+    else {
+        return false;
+    };
+    audit.high.rows >= calibration.minimum_audit_rows_per_tier
+        && audit.medium.rows >= calibration.minimum_audit_rows_per_tier
+        && audit.low.rows >= calibration.minimum_audit_rows_per_tier
+        && high_mae <= calibration.required_mae_ratio * medium_mae
+        && medium_mae <= calibration.required_mae_ratio * low_mae
+}
+
+fn percentile(sorted: &[f64], percentile: f64) -> f64 {
+    let index = ((sorted.len() as f64 * percentile).ceil() as usize)
+        .saturating_sub(1)
+        .min(sorted.len() - 1);
+    sorted[index]
+}
+
+fn audit_tier(observations: &[&ConfidenceObservation]) -> ConfidenceTierAudit {
+    if observations.is_empty() {
+        return ConfidenceTierAudit::default();
+    }
+    let rows = observations.len();
+    let absolute_error = observations
+        .iter()
+        .map(|observation| observation.absolute_error)
+        .sum::<f64>();
+    ConfidenceTierAudit {
+        rows,
+        runs_mae: Some(absolute_error / rows as f64),
+    }
 }
 
 fn mean_target(rows: &[FeatureRow], target: impl Fn(&FeatureRow) -> Option<f64>) -> Result<f64> {
@@ -397,21 +604,6 @@ fn mean_refs(rows: &[&FeatureRow], target: impl Fn(&FeatureRow) -> Option<f64>) 
 
 pub fn time_split_validate(rows: &[FeatureRow]) -> Result<ValidationMetrics> {
     walk_forward_validate(rows, rows.len() * 4 / 5)
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn validates_only_on_newest_rows() {
-        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
-        let rows = crate::features::historical_rows(&starts, 5).unwrap();
-        let metrics = super::time_split_validate(&rows).unwrap();
-        assert!(metrics.held_out_rows >= 1);
-        assert!(metrics.fip_mae.is_finite() && metrics.runs_mae.is_finite());
-        assert!(metrics.strikeouts_mae.is_finite() && metrics.innings_mae.is_finite());
-        assert!((0.0..=1.0).contains(&metrics.runs_interval_coverage));
-        assert!((0.0..=1.0).contains(&metrics.calibrated_runs_interval_coverage));
-    }
 }
 
 fn fit_target(
@@ -432,17 +624,17 @@ fn fit_target_with_noise(
     let prior_variance = 4.0;
     let mut precision = vec![vec![0.0; p]; p];
     let mut rhs = vec![0.0; p];
-    for j in 0..p {
-        precision[j][j] = 1.0 / prior_variance;
+    for (j, row) in precision.iter_mut().enumerate() {
+        row[j] = 1.0 / prior_variance;
     }
     // Intercept prior centers on league-average outcomes; other coefficients center at zero.
     rhs[0] = prior_intercept / prior_variance;
     for row in rows {
         let y = target(row).ok_or_else(|| PnsError::Model("training target missing".into()))?;
-        for j in 0..p {
+        for (j, precision_row) in precision.iter_mut().enumerate() {
             rhs[j] += row.values[j] * y / noise_variance;
-            for k in 0..p {
-                precision[j][k] += row.values[j] * row.values[k] / noise_variance;
+            for (k, cell) in precision_row.iter_mut().enumerate() {
+                *cell += row.values[j] * row.values[k] / noise_variance;
             }
         }
     }
@@ -455,7 +647,7 @@ fn fit_target_with_noise(
     })
 }
 
-fn predict(p: &Posterior, x: &[f64]) -> Result<(f64, f64)> {
+fn predict(p: &Posterior, x: &[f64]) -> Result<(f64, f64, f64)> {
     if p.mean.len() != x.len() {
         return Err(PnsError::Model(
             "feature width differs from fitted model".into(),
@@ -463,8 +655,13 @@ fn predict(p: &Posterior, x: &[f64]) -> Result<(f64, f64)> {
     }
     let mean = dot(&p.mean, x);
     let covariance_x = mat_vec(&p.covariance, x);
-    let variance = p.noise_variance + dot(x, &covariance_x);
-    Ok((mean, variance.max(0.0).sqrt()))
+    let epistemic_variance = dot(x, &covariance_x).max(0.0);
+    let predictive_variance = p.noise_variance + epistemic_variance;
+    Ok((
+        mean,
+        predictive_variance.max(0.0).sqrt(),
+        epistemic_variance.sqrt(),
+    ))
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -477,8 +674,8 @@ fn mat_vec(a: &[Vec<f64>], x: &[f64]) -> Vec<f64> {
 fn invert(mut a: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>> {
     let n = a.len();
     let mut inv = vec![vec![0.0; n]; n];
-    for i in 0..n {
-        inv[i][i] = 1.0;
+    for (i, row) in inv.iter_mut().enumerate() {
+        row[i] = 1.0;
     }
     for col in 0..n {
         let pivot = (col..n)
@@ -506,4 +703,147 @@ fn invert(mut a: Vec<Vec<f64>>) -> Result<Vec<Vec<f64>>> {
         }
     }
     Ok(inv)
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+
+    #[test]
+    fn validates_only_on_newest_rows() {
+        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
+        let rows = crate::features::historical_rows(&starts, 5).unwrap();
+        let metrics = super::time_split_validate(&rows).unwrap();
+        assert!(metrics.held_out_rows >= 1);
+        assert!(metrics.fip_mae.is_finite() && metrics.runs_mae.is_finite());
+        assert!(metrics.strikeouts_mae.is_finite() && metrics.innings_mae.is_finite());
+        assert!((0.0..=1.0).contains(&metrics.runs_interval_coverage));
+        assert!((0.0..=1.0).contains(&metrics.calibrated_runs_interval_coverage));
+        assert!(
+            metrics
+                .confidence_calibration
+                .high_max_normalized_epistemic_score
+                .is_finite()
+        );
+        assert!(
+            metrics
+                .confidence_calibration
+                .high_max_normalized_epistemic_score
+                <= metrics
+                    .confidence_calibration
+                    .medium_max_normalized_epistemic_score
+        );
+        assert!(
+            metrics.confidence_calibration.threshold_training_rows
+                <= metrics.held_out_rows - metrics.confidence_audit.rows
+        );
+    }
+
+    #[test]
+    fn posterior_width_is_not_reduced_by_zero_clipping() {
+        let starts = crate::data::pitcher_logs::fixture_starts().unwrap();
+        let rows = crate::features::historical_rows(&starts, 5).unwrap();
+        let model = super::BayesianLinearModel::fit(&rows).unwrap();
+        let projection = model.score(&rows[0]).unwrap();
+        assert!(projection.runs_epistemic_sd < projection.runs_posterior_sd);
+        assert!(
+            projection.posterior_width
+                >= projection.expected_runs_high - projection.expected_runs_low
+        );
+        if projection.expected_runs_low == 0.0 {
+            assert!(
+                projection.posterior_width
+                    > projection.expected_runs_high - projection.expected_runs_low
+            );
+        }
+    }
+
+    #[test]
+    fn confidence_thresholds_use_early_dates_and_audit_later_dates() {
+        let observations: Vec<_> = (0..10)
+            .map(|day| super::ConfidenceObservation {
+                date: NaiveDate::from_ymd_opt(2025, 4, day + 1).unwrap(),
+                runs_epistemic_sd: (day + 1) as f64,
+                starts_used: if day < 2 { 3 } else { 5 },
+                model_training_rows: 1,
+                absolute_error: day as f64,
+            })
+            .collect();
+        let (calibration, audit) = super::confidence_calibration(&observations).unwrap();
+        assert_eq!(calibration.training_period_dates, 7);
+        assert_eq!(calibration.threshold_training_rows, 5);
+        assert_eq!(calibration.high_max_normalized_epistemic_score, 4.0);
+        assert_eq!(calibration.medium_max_normalized_epistemic_score, 6.0);
+        assert_eq!(audit.dates, 3);
+        assert_eq!(audit.rows, 3);
+        assert_eq!(audit.high.rows + audit.medium.rows + audit.low.rows, 3);
+        assert_eq!(audit.low.runs_mae, Some(8.0));
+        assert!(!calibration.tiers_validated);
+    }
+
+    #[test]
+    fn confidence_tiers_require_sample_size_and_ordered_mae_separation() {
+        let calibration = super::ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 1.0,
+            medium_max_normalized_epistemic_score: 2.0,
+            threshold_training_rows: 500,
+            training_period_dates: 50,
+            tiers_validated: false,
+            minimum_audit_rows_per_tier: 100,
+            required_mae_ratio: 0.95,
+        };
+        let tier = |rows, mae| super::ConfidenceTierAudit {
+            rows,
+            runs_mae: Some(mae),
+        };
+        let validated = super::ConfidenceAudit {
+            rows: 300,
+            dates: 20,
+            high: tier(100, 1.0),
+            medium: tier(100, 1.1),
+            low: tier(100, 1.2),
+            short_history: super::ConfidenceTierAudit::default(),
+        };
+        assert!(super::tiers_are_validated(&validated, calibration));
+        let too_small = super::ConfidenceAudit {
+            high: tier(99, 1.0),
+            ..validated
+        };
+        assert!(!super::tiers_are_validated(&too_small, calibration));
+        let unordered = super::ConfidenceAudit {
+            high: tier(100, 1.1),
+            medium: tier(100, 1.0),
+            ..validated
+        };
+        assert!(!super::tiers_are_validated(&unordered, calibration));
+
+        let invalid_thresholds = super::ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 3.0,
+            medium_max_normalized_epistemic_score: 2.0,
+            ..calibration
+        };
+        assert!(!super::tiers_are_validated(&validated, invalid_thresholds));
+    }
+
+    #[test]
+    fn confidence_audit_separates_short_histories_from_candidate_tiers() {
+        let mut observations: Vec<_> = (0..10)
+            .map(|day| super::ConfidenceObservation {
+                date: NaiveDate::from_ymd_opt(2025, 4, day + 1).unwrap(),
+                runs_epistemic_sd: 1.0,
+                starts_used: 5,
+                model_training_rows: 1,
+                absolute_error: 1.0,
+            })
+            .collect();
+        observations[8].starts_used = 4;
+        observations[8].absolute_error = 9.0;
+
+        let (_, audit) = super::confidence_calibration(&observations).unwrap();
+
+        assert_eq!(audit.rows, 2);
+        assert_eq!(audit.high.rows + audit.medium.rows + audit.low.rows, 2);
+        assert_eq!(audit.short_history.rows, 1);
+        assert_eq!(audit.short_history.runs_mae, Some(9.0));
+    }
 }

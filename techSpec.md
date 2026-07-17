@@ -50,7 +50,7 @@ Mark decisions with `[DECISION]` so they can be challenged deliberately later.
 5. Each scored pitcher has:
    - `projected_fip` (posterior mean)
    - `expected_runs_low/base/high` (credible interval + central estimate)
-   - `confidence` (derived from posterior width / sample strength)
+   - `confidence` (normalized epistemic uncertainty, gated by a disjoint later-date accuracy audit)
    - `judgment`
 6. Desktop app path reproduces the demo:
    - open app
@@ -325,7 +325,8 @@ Context:
 ### Outputs
 - `projected_fip` = posterior mean
 - expected runs band = credible interval (+ central estimate)
-- `confidence` high/medium/low from posterior width and/or effective sample strength
+- `confidence` high/medium/low from training-size-normalized epistemic uncertainty; candidate thresholds are learned on complete five-start histories and must pass a disjoint later-date runs-MAE audit
+- if the audit gate fails, withhold high: complete five-start histories within the candidate-medium uncertainty boundary fall back to medium; unusually uncertain or shorter histories remain low
 - coefficients remain inspectable for explainability on camera
 
 ### [DECISION] Bayesian from the beginning

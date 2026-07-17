@@ -163,16 +163,22 @@ Each model produces its own posterior. The card is a translation layer across al
 | `expected_runs_low / base / high` | Runs allowed band for the outing | Credible interval + central estimate from posterior predictive (or calibrated mapping from FIP) |
 | `expected_innings` | Expected starter workload | Posterior mean from the innings model |
 | `expected_strikeouts` | Expected strikeout total | Posterior mean from the strikeout model |
-| `confidence` | high / medium / low | Posterior width + sample strength (e.g. # recent starts used) |
+| `confidence` | high / medium / low | Walk-forward-calibrated run uncertainty + recent-start sample strength |
 | `judgment` | One sentence a human can act on | Rule/template over projection + confidence + context |
 | `prop_lean` (optional) | Betting-facing lean | Derived from projection vs market/context later |
 | `team_model_input` | Expected runs allowed input | Central runs estimate (and optionally band) |
 
-### Confidence intuition
+### Confidence calibration
 
-- **High:** narrow posterior, adequate starts, stable features
-- **Medium:** usable but wide
-- **Low:** thin sample, missing context, or very wide posterior — trust the band, not the point
+Confidence is a reliability tier, not an opinion about whether the pitcher is good. The model separates reducible parameter uncertainty from the irreducible outing noise used in the run band, normalizes that epistemic uncertainty for the model's training-set size, then increases the score when fewer than five recent starts are available. Five-start predictions from the earlier 70% of held-out dates set the high/medium boundaries at the 33rd and 67th percentiles. The later 30% audit all tiers against results that did not choose those boundaries.
+
+The three learned tiers activate only when every audit tier has at least 100 starts and run MAE improves by at least 5% from low to medium and again from medium to high. If that validation gate fails, the app withholds **high**. Complete five-start histories inside the candidate-medium uncertainty boundary are **medium**; unusually uncertain or shorter histories are **low**. It does not force variety unsupported by later results.
+
+- **High:** lowest calibrated uncertainty score
+- **Medium:** middle calibrated uncertainty score
+- **Low:** highest calibrated uncertainty score — trust the band more than the point
+
+The displayed interval still uses total predictive uncertainty and clamps impossible negative runs to zero. Confidence does not use that clipped width, preventing low projected-run totals from looking artificially precise.
 
 Uncertainty is a feature. Hiding it would make the app dumber.
 

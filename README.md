@@ -82,7 +82,7 @@ Pitcher Next-Start is a **Rust + Tauri + Svelte** desktop app that:
    - projected next-start FIP (posterior mean)
    - expected runs allowed band (credible interval)
    - expected innings and strikeouts (independent Bayesian posterior means)
-   - confidence (from posterior width / sample strength)
+   - confidence (normalized epistemic uncertainty, gated by a later-date accuracy audit)
    - one-line judgment
    - optional prop lean
    - team-model input fields
@@ -190,7 +190,7 @@ Exact folder names may follow Adam’s global Tauri/Svelte conventions. Keep the
 - next-start projection, not descriptive board
 - dual-use output: prop lean + team-model input
 - Bayesian linear model from day one (not frequentist-then-Bayesian)
-- posterior-based confidence + credible bands
+- empirically calibrated credible bands + validation-gated confidence tiers
 - **Learn** tab: in-app math walkthrough of the model (same product role as mlb-PE Learn)
 - desktop app demo path: pick date → score → cards → CSV + open Learn
 
@@ -309,7 +309,7 @@ cargo run -p pns-core --example build_dataset -- 2023 2024 2025
 cargo run -p pns-core --example enrich_dataset
 ```
 
-The live model uses the processed 2023–2025 history when available and adds roughly 400 days of prior regular-season starts for the probable pitchers on the selected slate. Features are standardized from training data. Historical opponent and park factors are calculated chronologically from only earlier dates and shrunk toward the prior league rate. Four-seam/sinker velocity is aggregated from Baseball Savant by pitcher-start date. Future-slate opponent strength uses league-relative team OPS versus the starter's hand, while park environment uses the home club's home/away runs-per-game ratio. Walk-forward validation reports model and baseline MAE, raw interval coverage, and empirically calibrated interval coverage in `outputs/validation.json`.
+The live model uses the processed 2023–2025 history when available and adds roughly 400 days of prior regular-season starts for the probable pitchers on the selected slate. Features are standardized from training data. Historical opponent and park factors are calculated chronologically from only earlier dates and shrunk toward the prior league rate. Four-seam/sinker velocity is aggregated from Baseball Savant by pitcher-start date. Future-slate opponent strength uses league-relative team OPS versus the starter's hand, while park environment uses the home club's home/away runs-per-game ratio. Walk-forward validation reports model and baseline MAE, raw and calibrated interval coverage, and confidence calibration in `outputs/validation.json`. Confidence candidates use training-size-normalized epistemic uncertainty from complete five-start histories. They activate only after a disjoint later-date audit has enough rows per tier and monotonically improving realized runs MAE; otherwise high is withheld, complete histories within the candidate-medium uncertainty boundary fall back to medium, and unusually uncertain or short histories remain low.
 
 The desktop build embeds the normalized training dataset so scoring does not depend on the repository working directory. MLB responses use bounded retries plus TTL-based disk caching. Scored live projections are recorded under the application-data directory and can be reconciled with completed MLB game logs from the Validation page.
 

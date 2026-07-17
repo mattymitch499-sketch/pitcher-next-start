@@ -1,7 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import App from './App.svelte';
-import type { Card, ScoredSlate } from './types';
+import PitcherDetail from './PitcherDetail.svelte';
+import ValidationPage from './Validation.svelte';
+import type { Card, ScoredSlate, Validation } from './types';
 
 const invoke = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(...args) }));
@@ -19,10 +21,12 @@ const card = (id: number, name: string, team: string): Card => ({
   starter_status:'Probable',data_through:'2026-07-10',history_starts:20,data_warnings:[]
 });
 
-const metrics = {held_out_rows:100,held_out_dates:10,fip_mae:2,runs_mae:1.5,strikeouts_mae:1.8,innings_mae:.9,
+const metrics: Validation = {held_out_rows:100,held_out_dates:10,fip_mae:2,runs_mae:1.5,strikeouts_mae:1.8,innings_mae:.9,
   calibrated_runs_interval_coverage:.9,calibrated_strikeouts_interval_coverage:.9,calibrated_innings_interval_coverage:.9,
   league_fip_mae:2.1,pitcher_history_fip_mae:2.05,last_five_fip_mae:2.2,league_runs_mae:1.6,pitcher_history_runs_mae:1.55,last_five_runs_mae:1.7,
-  league_strikeouts_mae:2,pitcher_history_strikeouts_mae:1.9,last_five_strikeouts_mae:2.1,league_innings_mae:1.1,pitcher_history_innings_mae:1,last_five_innings_mae:1.2};
+  league_strikeouts_mae:2,pitcher_history_strikeouts_mae:1.9,last_five_strikeouts_mae:2.1,league_innings_mae:1.1,pitcher_history_innings_mae:1,last_five_innings_mae:1.2,
+  confidence_calibration:{high_max_normalized_epistemic_score:.1,medium_max_normalized_epistemic_score:.2,threshold_training_rows:70,training_period_dates:7,tiers_validated:true,minimum_audit_rows_per_tier:100,required_mae_ratio:.95},
+  confidence_audit:{rows:35,dates:3,high:{rows:10,runs_mae:1.2},medium:{rows:10,runs_mae:1.5},low:{rows:10,runs_mae:1.8},short_history:{rows:5,runs_mae:2.1}}};
 const slate: ScoredSlate = {cards:[card(1,'Alpha Pitcher','Brewers'),card(2,'Beta Pitcher','Cubs')],validation:metrics,generated_at:'2026-07-16T12:00:00Z'};
 
 describe('projection workflow', () => {
@@ -44,5 +48,27 @@ describe('projection workflow', () => {
     await fireEvent.click(screen.getByRole('button',{name:/back to slate/i}));
     await fireEvent.click(screen.getByRole('button',{name:/export predictions/i}));
     expect(await screen.findByText(/\/tmp\/predictions.csv/)).toBeTruthy();
+  });
+
+  it('explains when confidence tiers are withheld', () => {
+    const withheld = structuredClone(metrics);
+    withheld.confidence_calibration.tiers_validated = false;
+    render(PitcherDetail, { card: card(1, 'Alpha Pitcher', 'Brewers'), validation: withheld, onback: vi.fn() });
+    expect(screen.getByText(/high confidence is withheld/i)).toBeTruthy();
+  });
+
+  it('labels confidence as provisional when validation is unavailable', () => {
+    render(PitcherDetail, { card: card(1, 'Alpha Pitcher', 'Brewers'), validation: null, onback: vi.fn() });
+    expect(screen.getByText(/confidence calibration is unavailable/i)).toBeTruthy();
+  });
+
+  it('renders missing confidence audit MAE without inventing a value', () => {
+    const missingMae = structuredClone(metrics);
+    missingMae.confidence_calibration.tiers_validated = false;
+    missingMae.confidence_audit.high.runs_mae = null;
+    render(ValidationPage, { metrics: missingMae, history: [], onreconcile: vi.fn() });
+    expect(screen.getByRole('heading', { name: /confidence tier audit/i })).toBeTruthy();
+    expect(screen.getByText('Gate failed · high withheld')).toBeTruthy();
+    expect(screen.getByText('—')).toBeTruthy();
   });
 });

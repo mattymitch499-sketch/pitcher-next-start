@@ -1,5 +1,6 @@
 use crate::data::types::{NextStartContext, PitcherStartLog};
 use crate::features::FeatureRow;
+use crate::model::ConfidenceCalibration;
 use chrono::Datelike;
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,8 @@ pub struct Projection {
     pub starts_used: usize,
     pub fip_posterior_sd: f64,
     pub runs_posterior_sd: f64,
+    pub runs_epistemic_sd: f64,
+    pub model_training_rows: usize,
     pub expected_strikeouts: f64,
     pub expected_innings: f64,
     pub expected_strikeouts_low: f64,
@@ -25,7 +28,7 @@ pub struct Projection {
     pub innings_posterior_sd: f64,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Confidence {
     High,
@@ -118,12 +121,9 @@ pub fn build_card(
     p: Projection,
     row: &FeatureRow,
     starts: &[PitcherStartLog],
+    calibration: ConfidenceCalibration,
 ) -> DecisionCard {
-    let confidence = match (p.starts_used, p.posterior_width) {
-        (5.., w) if w <= 4.0 => Confidence::High,
-        (4.., w) if w <= 6.0 => Confidence::Medium,
-        _ => Confidence::Low,
-    };
+    let confidence = confidence_for(&p, calibration);
     let quality = if p.projected_fip < 3.7 {
         "Strong run-prevention outlook"
     } else if p.projected_fip < 4.5 {
@@ -305,6 +305,36 @@ pub fn build_card(
     }
 }
 
+fn confidence_for(p: &Projection, calibration: ConfidenceCalibration) -> Confidence {
+    let score =
+        calibration.epistemic_score(p.runs_epistemic_sd, p.model_training_rows, p.starts_used);
+    confidence_for_score(score, p.starts_used, calibration)
+}
+
+fn confidence_for_score(
+    score: f64,
+    starts_used: usize,
+    calibration: ConfidenceCalibration,
+) -> Confidence {
+    if !score.is_finite() || !calibration.has_valid_thresholds() {
+        return Confidence::Low;
+    }
+    if !calibration.tiers_validated {
+        return if starts_used >= 5 && score <= calibration.medium_max_normalized_epistemic_score {
+            Confidence::Medium
+        } else {
+            Confidence::Low
+        };
+    }
+    if starts_used == 5 && score <= calibration.high_max_normalized_epistemic_score {
+        Confidence::High
+    } else if starts_used == 5 && score <= calibration.medium_max_normalized_epistemic_score {
+        Confidence::Medium
+    } else {
+        Confidence::Low
+    }
+}
+
 fn pitching_line(rows: &[&PitcherStartLog]) -> PitchingLine {
     let bf = rows
         .iter()
@@ -381,4 +411,107 @@ pub fn render_markdown(card: &DecisionCard) -> String {
         card.team_model_input.unwrap_or_default(),
         card.judgment
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Confidence, confidence_for_score};
+    use crate::model::ConfidenceCalibration;
+
+    #[test]
+    fn calibrated_confidence_includes_threshold_boundaries() {
+        let calibration = ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 4.0,
+            medium_max_normalized_epistemic_score: 6.0,
+            threshold_training_rows: 100,
+            training_period_dates: 20,
+            tiers_validated: true,
+            minimum_audit_rows_per_tier: 100,
+            required_mae_ratio: 0.95,
+        };
+        assert_eq!(confidence_for_score(3.99, 5, calibration), Confidence::High);
+        assert_eq!(confidence_for_score(4.0, 5, calibration), Confidence::High);
+        assert_eq!(
+            confidence_for_score(4.01, 5, calibration),
+            Confidence::Medium
+        );
+        assert_eq!(
+            confidence_for_score(6.0, 5, calibration),
+            Confidence::Medium
+        );
+        assert_eq!(confidence_for_score(6.01, 5, calibration), Confidence::Low);
+        assert_eq!(confidence_for_score(3.0, 4, calibration), Confidence::Low);
+        assert_eq!(confidence_for_score(3.0, 3, calibration), Confidence::Low);
+    }
+
+    #[test]
+    fn confidence_score_penalizes_short_history() {
+        let calibration = ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 4.0,
+            medium_max_normalized_epistemic_score: 6.0,
+            threshold_training_rows: 100,
+            training_period_dates: 20,
+            tiers_validated: true,
+            minimum_audit_rows_per_tier: 100,
+            required_mae_ratio: 0.95,
+        };
+        assert!(
+            calibration.epistemic_score(4.0, 100, 3) > calibration.epistemic_score(4.0, 100, 5)
+        );
+        assert_eq!(
+            calibration.epistemic_score(1.0, 100, 5),
+            calibration.epistemic_score(2.0, 25, 5)
+        );
+    }
+
+    #[test]
+    fn unvalidated_tiers_fall_back_without_high_confidence() {
+        let calibration = ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 4.0,
+            medium_max_normalized_epistemic_score: 6.0,
+            threshold_training_rows: 100,
+            training_period_dates: 20,
+            tiers_validated: false,
+            minimum_audit_rows_per_tier: 100,
+            required_mae_ratio: 0.95,
+        };
+        assert_eq!(
+            confidence_for_score(1.0, 5, calibration),
+            Confidence::Medium
+        );
+        assert_eq!(confidence_for_score(1.0, 4, calibration), Confidence::Low);
+        assert_eq!(confidence_for_score(6.01, 5, calibration), Confidence::Low);
+        assert_eq!(
+            confidence_for_score(f64::NAN, 5, calibration),
+            Confidence::Low
+        );
+        assert_eq!(
+            confidence_for_score(f64::INFINITY, 5, calibration),
+            Confidence::Low
+        );
+    }
+
+    #[test]
+    fn invalid_thresholds_are_always_low_confidence() {
+        let calibration = ConfidenceCalibration {
+            high_max_normalized_epistemic_score: 7.0,
+            medium_max_normalized_epistemic_score: 6.0,
+            threshold_training_rows: 100,
+            training_period_dates: 20,
+            tiers_validated: true,
+            minimum_audit_rows_per_tier: 100,
+            required_mae_ratio: 0.95,
+        };
+        assert_eq!(confidence_for_score(1.0, 5, calibration), Confidence::Low);
+
+        let negative_thresholds = ConfidenceCalibration {
+            high_max_normalized_epistemic_score: -2.0,
+            medium_max_normalized_epistemic_score: -1.0,
+            ..calibration
+        };
+        assert_eq!(
+            confidence_for_score(0.0, 5, negative_thresholds),
+            Confidence::Low
+        );
+    }
 }

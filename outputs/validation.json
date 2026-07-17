@@ -1,15 +1,58 @@
 {
   "held_out_rows": 2775,
   "held_out_dates": 113,
-  "fip_mae": 2.0528620955421806,
-  "runs_mae": 1.5693087068175595,
-  "runs_interval_coverage": 0.8122522522522523,
+  "fip_mae": 2.0541330563431144,
+  "runs_mae": 1.5681299086079197,
+  "strikeouts_mae": 1.8337700906865568,
+  "innings_mae": 0.9142559121340135,
+  "strikeouts_interval_coverage": 0.9268468468468468,
+  "innings_interval_coverage": 0.8623423423423423,
+  "calibrated_strikeouts_interval_coverage": 0.9001801801801802,
+  "calibrated_innings_interval_coverage": 0.8998198198198198,
+  "recommended_strikeouts_interval_scale": 0.9123097903542952,
+  "recommended_innings_interval_scale": 1.1390268151232377,
+  "league_strikeouts_mae": 1.923798250109125,
+  "pitcher_history_strikeouts_mae": 1.8636647436095524,
+  "last_five_strikeouts_mae": 1.9397683169801252,
+  "league_innings_mae": 0.9905115235207613,
+  "pitcher_history_innings_mae": 0.9568965815255328,
+  "last_five_innings_mae": 0.9753351372016922,
+  "runs_interval_coverage": 0.8126126126126126,
   "calibrated_runs_interval_coverage": 0.9001801801801802,
-  "recommended_interval_scale": 1.1384374319907689,
+  "recommended_interval_scale": 1.1335726121859633,
   "league_fip_mae": 2.0884185309852055,
   "pitcher_history_fip_mae": 2.0743882755359637,
   "last_five_fip_mae": 2.2257786391573884,
   "league_runs_mae": 1.597472228136532,
   "pitcher_history_runs_mae": 1.5856667320864704,
-  "last_five_runs_mae": 1.6692085241367776
+  "last_five_runs_mae": 1.6692085241367776,
+  "confidence_calibration": {
+    "high_max_normalized_epistemic_score": 4.512722787041854,
+    "medium_max_normalized_epistemic_score": 5.429663432726247,
+    "threshold_training_rows": 1857,
+    "training_period_dates": 80,
+    "tiers_validated": false,
+    "minimum_audit_rows_per_tier": 100,
+    "required_mae_ratio": 0.95
+  },
+  "confidence_audit": {
+    "rows": 820,
+    "dates": 33,
+    "high": {
+      "rows": 253,
+      "runs_mae": 1.66556273710532
+    },
+    "medium": {
+      "rows": 287,
+      "runs_mae": 1.5072131889309015
+    },
+    "low": {
+      "rows": 280,
+      "runs_mae": 1.623748960142309
+    },
+    "short_history": {
+      "rows": 20,
+      "runs_mae": 1.8295360504306646
+    }
+  }
 }

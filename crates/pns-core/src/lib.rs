@@ -207,7 +207,7 @@ fn score_normalized_detailed(
     starts: &[data::types::PitcherStartLog],
     contexts: &[data::types::NextStartContext],
 ) -> Result<ScoredSlate> {
-    let training = features::historical_rows(&starts, 5)?;
+    let training = features::historical_rows(starts, 5)?;
     let minimum_training_rows = (training.len() / 2).max(10).min(training.len() - 1);
     let validation = model::walk_forward_validate(&training, minimum_training_rows)?;
     let model = model::BayesianLinearModel::fit(&training)?
@@ -223,11 +223,15 @@ fn score_normalized_detailed(
                 Ok(row) => row,
                 Err(_) => return None,
             };
-            Some(
-                model
-                    .score(&row)
-                    .map(|projection| card::build_card(context, projection, &row, starts)),
-            )
+            Some(model.score(&row).map(|projection| {
+                card::build_card(
+                    context,
+                    projection,
+                    &row,
+                    starts,
+                    validation.confidence_calibration,
+                )
+            }))
         })
         .collect::<Result<_>>()?;
     if cards.is_empty() {

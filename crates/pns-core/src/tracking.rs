@@ -84,13 +84,13 @@ pub fn reconcile_history(root: impl AsRef<Path>) -> Result<Vec<TrackedPrediction
         if date >= today {
             continue;
         }
-        if let Ok(starts) = client.pitcher_starts_range(row.pitcher_id, date, date) {
-            if let Some(start) = starts.into_iter().find(|start| start.game_date == date) {
-                row.actual_fip = Some(start.fip().clamp(0.0, 10.0));
-                row.actual_runs = Some(start.earned_runs as f64);
-                row.actual_innings = Some(start.innings_pitched);
-                row.actual_strikeouts = Some(start.strikeouts as f64);
-            }
+        if let Ok(starts) = client.pitcher_starts_range(row.pitcher_id, date, date)
+            && let Some(start) = starts.into_iter().find(|start| start.game_date == date)
+        {
+            row.actual_fip = Some(start.fip().clamp(0.0, 10.0));
+            row.actual_runs = Some(start.earned_runs as f64);
+            row.actual_innings = Some(start.innings_pitched);
+            row.actual_strikeouts = Some(start.strikeouts as f64);
         }
     }
     if let Some(parent) = path.parent() {

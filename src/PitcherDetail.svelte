@@ -7,6 +7,11 @@
   export let onnext: (() => void) | null = null;
   export let generatedAt = '';
   const factorText = (value: number, kind: string) => value < 0.98 ? `${Math.round((1-value)*100)}% easier than average ${kind}` : value > 1.02 ? `${Math.round((value-1)*100)}% harder than average ${kind}` : `Neutral ${kind}`;
+  const confidenceExplanation = (report: Validation | null) => {
+    if (!report?.confidence_calibration) return 'Confidence calibration is unavailable for this run, so treat the label as provisional.';
+    if (report.confidence_calibration.tiers_validated) return `The ${card.confidence} label is a validation-gated uncertainty tier learned from walk-forward results.`;
+    return 'The candidate uncertainty tiers did not pass the later-date audit, so high confidence is withheld; complete five-start histories inside the candidate-medium boundary are medium, while unusually uncertain or shorter histories are low.';
+  };
 </script>
 
 <main class="pitcher-page">
@@ -29,7 +34,7 @@
 
   <section class="detail-panel"><div class="panel-title"><h2>Next-start context</h2><span>1.00 is league neutral</span></div><div class="factor-detail"><div><span>Park factor</span><b>{card.park_factor.toFixed(3)}</b><p>{factorText(card.park_factor, 'run environment')}</p></div><div><span>Opponent factor</span><b>{card.opponent_offense_factor.toFixed(3)}</b><p>{factorText(card.opponent_offense_factor, 'opponent split')}</p></div></div></section>
 
-  <section class="detail-panel"><div class="panel-title"><h2>Uncertainty and use</h2><span>Research-grade output</span></div><p class="explanation">The {card.confidence} label combines recent-start availability with posterior interval width. Use <strong>{card.expected_runs_base.toFixed(2)}</strong> as the starter input to a team model, while preserving {card.expected_runs_low.toFixed(2)}–{card.expected_runs_high.toFixed(2)} for scenario analysis. Innings and strikeouts are independently trained expectations, not conversions from projected runs.</p>{#if validation}<div class="detail-validation"><span>Walk-forward FIP MAE <b>{validation.fip_mae.toFixed(3)}</b></span><span>Calibrated coverage <b>{(validation.calibrated_runs_interval_coverage*100).toFixed(1)}%</b></span></div>{/if}</section></div>
+  <section class="detail-panel"><div class="panel-title"><h2>Uncertainty and use</h2><span>Research-grade output</span></div><p class="explanation">{confidenceExplanation(validation)} Use <strong>{card.expected_runs_base.toFixed(2)}</strong> as the starter input to a team model, while preserving {card.expected_runs_low.toFixed(2)}–{card.expected_runs_high.toFixed(2)} for scenario analysis. Innings and strikeouts are independently trained expectations, not conversions from projected runs.</p>{#if validation}<div class="detail-validation"><span>Walk-forward FIP MAE <b>{validation.fip_mae.toFixed(3)}</b></span><span>Calibrated coverage <b>{(validation.calibrated_runs_interval_coverage*100).toFixed(1)}%</b></span></div>{/if}</section></div>
 
   <section class="history-panel"><div class="panel-title"><div><h2>Recent starts</h2><p>Game-by-game results behind the rolling form</p></div><span>Most recent first</span></div><div class="history-table"><div class="history-head"><span>Date</span><span>Opponent</span><span>IP</span><span>P</span><span>BF</span><span>H</span><span>HR</span><span>ER</span><span>K</span><span>BB</span><span>FIP</span></div>{#each card.recent_starts as start}<div class="history-row"><time>{start.game_date}</time><b>{start.home ? 'vs' : '@'} {start.opponent_name}</b><span>{start.innings_pitched.toFixed(1)}</span><span>{start.pitch_count ?? '—'}</span><span>{start.batters_faced}</span><span>{start.hits}</span><span>{start.home_runs}</span><span>{start.earned_runs}</span><span>{start.strikeouts}</span><span>{start.walks}</span><span>{start.fip.toFixed(2)}</span></div>{/each}</div></section>
 

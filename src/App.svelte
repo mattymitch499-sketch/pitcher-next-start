@@ -1,13 +1,25 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
   import Learn from './Learn.svelte';
+  import PaperTrading from './PaperTrading.svelte';
   import PitcherDetail from './PitcherDetail.svelte';
   import ValidationPage from './Validation.svelte';
-  import type { Card, ModelInfo, Validation, ScoredSlate, TrackedPrediction } from './types';
+  import type { Card, ModelInfo, PaperLog, Validation, ScoredSlate, TrackedPrediction } from './types';
 
-  let page: 'projections' | 'learn' | 'pitcher' | 'validation' = 'projections';
+  // Date.toISOString() reports the UTC calendar date, which is a different
+  // day from local evenings onward (e.g. after ~8pm Eastern). "Today" here
+  // must mean the user's local today, not UTC's.
+  const todayLocal = () => {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const day = String(now.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
+  let page: 'projections' | 'learn' | 'pitcher' | 'validation' | 'paper' = 'projections';
   let selectedCard: Card | null = null;
-  let date = new Date().toISOString().slice(0, 10);
+  let date = todayLocal();
   let cards: Card[] = [];
   let validation: Validation | null = null;
   let error = '';
@@ -19,6 +31,8 @@
   let team = 'all';
   let history: TrackedPrediction[] = [];
   let reconciling = false;
+  let paperLog: PaperLog | null = null;
+  let paperLoading = false;
   const modelFreshness = () => {
     if (!model) return { stale: false, label: 'Model training', value: 'Loads on run', detail: '' };
     const cutoff = new Date(`${model.trained_through}T00:00:00`);
@@ -47,6 +61,8 @@
   function movePitcher(offset: number) { const card = adjacentCard(offset); if (card) { selectedCard = card; window.scrollTo(0, 0); } }
   async function openValidation() { page = 'validation'; try { history = await invoke<TrackedPrediction[]>('prediction_history'); } catch (cause) { error = String(cause); } window.scrollTo(0, 0); }
   async function reconcileHistory() { reconciling = true; error = ''; try { history = await invoke<TrackedPrediction[]>('reconcile_prediction_history'); } catch (cause) { error = String(cause); } finally { reconciling = false; } }
+  async function openPaper() { page = 'paper'; error = ''; try { paperLog = await invoke<PaperLog>('paper_trading_status'); } catch (cause) { error = String(cause); } window.scrollTo(0, 0); }
+  async function updatePaper() { paperLoading = true; error = ''; try { paperLog = await invoke<PaperLog>('paper_trading_update', { date: todayLocal() }); } catch (cause) { error = String(cause); } finally { paperLoading = false; } }
 </script>
 
 <div class="app-shell">
@@ -57,6 +73,7 @@
     <nav aria-label="Primary">
       <a class:active={page === 'projections' || page === 'pitcher'} href="#projections" onclick={() => page = 'projections'}>Projections</a>
       <a class:active={page === 'validation'} href="#validation" onclick={openValidation}>Validation</a>
+      <a class:active={page === 'paper'} href="#paper" onclick={openPaper}>Paper trading</a>
       <a class:active={page === 'learn'} href="#learn" onclick={() => page = 'learn'}>Learn the models</a>
     </nav>
     <div class="model-status"><i></i><span>Bayesian models</span><b>Live MLB data</b></div>
@@ -68,6 +85,9 @@
     <Learn />
   {:else if page === 'validation'}
     <ValidationPage metrics={validation} {history} loading={reconciling} onreconcile={reconcileHistory} />
+  {:else if page === 'paper'}
+    {#if error}<div class="alert error"><b>Paper trading failed</b><span>{error}</span></div>{/if}
+    <PaperTrading log={paperLog} loading={paperLoading} onupdate={updatePaper} />
   {:else}
     <main class="workspace">
       <div class="page-heading">

@@ -3,12 +3,24 @@ use crate::{PnsError, Projection, Result};
 
 pub mod artifact;
 
+/// Normal-Inverse-Gamma posterior. `covariance` stores the noise-scaled-out
+/// matrix V_n, so the predictive variance is `noise * (1 + x'V_n x)` where
+/// `noise = noise_rate / noise_shape` is the posterior mean of sigma^2.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct Posterior {
     mean: Vec<f64>,
     covariance: Vec<Vec<f64>>,
-    noise_variance: f64,
+    noise_shape: f64,
+    noise_rate: f64,
 }
+
+impl Posterior {
+    fn noise_variance(&self) -> f64 {
+        self.noise_rate / self.noise_shape
+    }
+}
+
+pub const MAX_STRIKEOUTS: usize = 25;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BayesianLinearModel {
@@ -16,15 +28,19 @@ pub struct BayesianLinearModel {
     runs: Posterior,
     strikeouts: Posterior,
     innings: Posterior,
+    k_rate: Posterior,
+    batters_faced: Posterior,
     interval_scale: f64,
     strikeouts_interval_scale: f64,
     innings_interval_scale: f64,
+    k_concentration: f64,
+    bf_residual_quantiles: Vec<f64>,
     feature_means: Vec<f64>,
     feature_scales: Vec<f64>,
     training_row_count: usize,
 }
 
-#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ValidationMetrics {
     pub held_out_rows: usize,
     pub held_out_dates: usize,
@@ -55,6 +71,31 @@ pub struct ValidationMetrics {
     pub last_five_runs_mae: f64,
     pub confidence_calibration: ConfidenceCalibration,
     pub confidence_audit: ConfidenceAudit,
+    pub k_distribution: KDistributionCalibration,
+}
+
+/// Calibration of the discrete strikeout distribution. The beta-binomial
+/// concentration and batters-faced residual spread are selected on the earlier
+/// 70% of held-out dates; the audit fields grade the later 30% only.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct KDistributionCalibration {
+    pub concentration: f64,
+    pub bf_residual_quantiles: Vec<f64>,
+    pub training_rows: usize,
+    pub audit_rows: usize,
+    pub audit_log_score: Option<f64>,
+    pub gaussian_baseline_log_score: Option<f64>,
+    pub compositional_strikeouts_mae: Option<f64>,
+    pub direct_strikeouts_mae: Option<f64>,
+    pub line_reliability: Vec<KLineReliability>,
+}
+
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct KLineReliability {
+    pub line: f64,
+    pub rows: usize,
+    pub mean_predicted_over: f64,
+    pub observed_over_rate: f64,
 }
 
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -117,6 +158,17 @@ struct ConfidenceObservation {
     absolute_error: f64,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct KObservation {
+    date: chrono::NaiveDate,
+    k_rate_mean: f64,
+    batters_faced_mean: f64,
+    direct_mean: f64,
+    direct_sd: f64,
+    actual_strikeouts: f64,
+    actual_batters: f64,
+}
+
 impl BayesianLinearModel {
     pub fn fit(rows: &[FeatureRow]) -> Result<Self> {
         if rows.len() < 4 {
@@ -126,13 +178,17 @@ impl BayesianLinearModel {
         }
         let (standardized, feature_means, feature_scales) = standardize_rows(rows)?;
         Ok(Self {
-            fip: fit_target(&standardized, |r| r.target_fip, 4.20)?,
-            runs: fit_target(&standardized, |r| r.target_runs, 3.0)?,
-            strikeouts: fit_target_with_noise(&standardized, |r| r.target_strikeouts, 5.2, 6.25)?,
-            innings: fit_target_with_noise(&standardized, |r| r.target_innings, 5.3, 1.0)?,
+            fip: fit_target_nig(&standardized, |r| r.target_fip, 4.20, 2.25)?,
+            runs: fit_target_nig(&standardized, |r| r.target_runs, 3.0, 2.25)?,
+            strikeouts: fit_target_nig(&standardized, |r| r.target_strikeouts, 5.2, 6.25)?,
+            innings: fit_target_nig(&standardized, |r| r.target_innings, 5.3, 1.0)?,
+            k_rate: fit_target_nig(&standardized, |r| r.target_k_rate, 0.22, 0.01)?,
+            batters_faced: fit_target_nig(&standardized, |r| r.target_batters_faced, 24.0, 25.0)?,
             interval_scale: 1.0,
             strikeouts_interval_scale: 1.0,
             innings_interval_scale: 1.0,
+            k_concentration: 150.0,
+            bf_residual_quantiles: vec![0.0],
             feature_means,
             feature_scales,
             training_row_count: rows.len(),
@@ -150,12 +206,33 @@ impl BayesianLinearModel {
         self
     }
 
+    pub fn with_k_distribution(mut self, calibration: &KDistributionCalibration) -> Self {
+        self.k_concentration = calibration.concentration.clamp(10.0, 5000.0);
+        if !calibration.bf_residual_quantiles.is_empty() {
+            self.bf_residual_quantiles = calibration.bf_residual_quantiles.clone();
+        }
+        self
+    }
+
     pub fn score(&self, row: &FeatureRow) -> Result<Projection> {
         let values = standardize_values(&row.values, &self.feature_means, &self.feature_scales)?;
         let (fip, fip_sd, _) = predict(&self.fip, &values)?;
         let (runs, runs_sd, runs_epistemic_sd) = predict(&self.runs, &values)?;
         let (strikeouts, strikeouts_sd, _) = predict(&self.strikeouts, &values)?;
         let (innings, innings_sd, _) = predict(&self.innings, &values)?;
+        let (k_rate_mean, _, _) = predict(&self.k_rate, &values)?;
+        let (batters_faced_mean, _, _) = predict(&self.batters_faced, &values)?;
+        let strikeout_probabilities = strikeout_pmf(
+            k_rate_mean,
+            batters_faced_mean,
+            &self.bf_residual_quantiles,
+            self.k_concentration,
+        );
+        let expected_strikeouts_compositional = strikeout_probabilities
+            .iter()
+            .enumerate()
+            .map(|(k, probability)| k as f64 * probability)
+            .sum::<f64>();
         let half_width = 1.645 * runs_sd * self.interval_scale;
         let low = (runs - half_width).max(0.0);
         let high = (runs + half_width).max(low + 0.1);
@@ -183,6 +260,10 @@ impl BayesianLinearModel {
             expected_innings_high: (innings + innings_half_width).clamp(0.1, 9.0),
             strikeouts_posterior_sd: strikeouts_sd,
             innings_posterior_sd: innings_sd,
+            k_rate_mean,
+            batters_faced_mean,
+            expected_strikeouts_compositional,
+            strikeout_probabilities,
         })
     }
 
@@ -207,20 +288,40 @@ impl BayesianLinearModel {
             || !(0.75..=2.0).contains(&self.interval_scale)
             || !(0.75..=3.0).contains(&self.strikeouts_interval_scale)
             || !(0.75..=3.0).contains(&self.innings_interval_scale)
+            || !(10.0..=5000.0).contains(&self.k_concentration)
+            || self.bf_residual_quantiles.is_empty()
+            || self.bf_residual_quantiles.len() > 99
+            || self
+                .bf_residual_quantiles
+                .iter()
+                .any(|value| !value.is_finite())
+            || self
+                .bf_residual_quantiles
+                .windows(2)
+                .any(|pair| pair[0] > pair[1])
         {
             return Err(PnsError::Model(
                 "artifact model contains invalid standardization or interval values".into(),
             ));
         }
-        for posterior in [&self.fip, &self.runs, &self.strikeouts, &self.innings] {
+        for posterior in [
+            &self.fip,
+            &self.runs,
+            &self.strikeouts,
+            &self.innings,
+            &self.k_rate,
+            &self.batters_faced,
+        ] {
             if posterior.mean.len() != feature_width
                 || posterior.covariance.len() != feature_width
                 || posterior
                     .covariance
                     .iter()
                     .any(|row| row.len() != feature_width)
-                || !posterior.noise_variance.is_finite()
-                || posterior.noise_variance <= 0.0
+                || !posterior.noise_shape.is_finite()
+                || !posterior.noise_rate.is_finite()
+                || posterior.noise_shape <= 0.0
+                || posterior.noise_rate <= 0.0
                 || posterior.mean.iter().any(|value| !value.is_finite())
                 || posterior
                     .covariance
@@ -304,6 +405,35 @@ impl ValidationMetrics {
         {
             return Err(PnsError::Model(
                 "model artifact validation metrics are internally inconsistent".into(),
+            ));
+        }
+        let k = &self.k_distribution;
+        if !(10.0..=5000.0).contains(&k.concentration)
+            || k.bf_residual_quantiles.is_empty()
+            || k.bf_residual_quantiles.len() > 99
+            || k.bf_residual_quantiles
+                .iter()
+                .any(|value| !value.is_finite())
+            || k.bf_residual_quantiles
+                .windows(2)
+                .any(|pair| pair[0] > pair[1])
+            || k.training_rows == 0
+            || [k.audit_log_score, k.gaussian_baseline_log_score]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite())
+            || [k.compositional_strikeouts_mae, k.direct_strikeouts_mae]
+                .into_iter()
+                .flatten()
+                .any(|value| !value.is_finite() || value < 0.0)
+            || k.line_reliability.iter().any(|reliability| {
+                !reliability.line.is_finite()
+                    || !(0.0..=1.0).contains(&reliability.mean_predicted_over)
+                    || !(0.0..=1.0).contains(&reliability.observed_over_rate)
+            })
+        {
+            return Err(PnsError::Model(
+                "model artifact strikeout distribution calibration is invalid".into(),
             ));
         }
         Ok(())
@@ -412,6 +542,7 @@ pub fn walk_forward_validate(
     let mut held_out_rows = 0usize;
     let mut held_out_dates = 0usize;
     let mut confidence_observations = Vec::new();
+    let mut k_observations = Vec::new();
     let mut index = minimum_training_rows.max(4).min(ordered.len() - 1);
     let remaining_dates = ordered[index..]
         .iter()
@@ -521,6 +652,17 @@ pub fn walk_forward_validate(
                 model_training_rows: projection.model_training_rows,
                 absolute_error: (projection.expected_runs_base - runs).abs(),
             });
+            k_observations.push(KObservation {
+                date: row.as_of,
+                k_rate_mean: projection.k_rate_mean,
+                batters_faced_mean: projection.batters_faced_mean,
+                direct_mean: projection.expected_strikeouts,
+                direct_sd: projection.strikeouts_posterior_sd,
+                actual_strikeouts: strikeouts,
+                actual_batters: row.target_batters_faced.ok_or_else(|| {
+                    PnsError::Model("validation batters-faced target missing".into())
+                })?,
+            });
             held_out_rows += 1;
         }
         held_out_dates += 1;
@@ -559,6 +701,7 @@ pub fn walk_forward_validate(
         .count();
     let (confidence_calibration, confidence_audit) =
         confidence_calibration(&confidence_observations)?;
+    let k_distribution = calibrate_k_distribution(&k_observations)?;
     Ok(ValidationMetrics {
         held_out_rows,
         held_out_dates,
@@ -591,7 +734,142 @@ pub fn walk_forward_validate(
         last_five_runs_mae: last_five_runs_error / held_out_rows as f64,
         confidence_calibration,
         confidence_audit,
+        k_distribution,
     })
+}
+
+/// Chooses the beta-binomial concentration and batters-faced spread on the
+/// earlier 70% of held-out dates, then grades the later 30% that had no say in
+/// the choice: mean predictive log score against the old Gaussian treatment,
+/// point MAE for both estimators, and over-line reliability at common lines.
+fn calibrate_k_distribution(observations: &[KObservation]) -> Result<KDistributionCalibration> {
+    if observations.is_empty() {
+        return Err(PnsError::Model(
+            "strikeout distribution calibration produced no held-out rows".into(),
+        ));
+    }
+    let dates: Vec<_> = observations
+        .iter()
+        .map(|observation| observation.date)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    let training_date_count = (dates.len() * 7).div_ceil(10).max(1);
+    let training_through = dates[training_date_count.min(dates.len()) - 1];
+    let (training, audit): (Vec<&KObservation>, Vec<&KObservation>) = observations
+        .iter()
+        .partition(|observation| observation.date <= training_through);
+    let mut residuals: Vec<_> = training
+        .iter()
+        .map(|observation| observation.actual_batters - observation.batters_faced_mean)
+        .collect();
+    residuals.sort_by(f64::total_cmp);
+    let bf_residual_quantiles: Vec<_> = (1..=19)
+        .map(|step| percentile(&residuals, step as f64 * 0.05))
+        .collect();
+    const CONCENTRATION_GRID: [f64; 11] = [
+        25.0, 50.0, 75.0, 100.0, 150.0, 200.0, 300.0, 500.0, 800.0, 1200.0, 2000.0,
+    ];
+    let mut concentration = CONCENTRATION_GRID[0];
+    let mut best_log_likelihood = f64::NEG_INFINITY;
+    for candidate in CONCENTRATION_GRID {
+        let log_likelihood: f64 = training
+            .iter()
+            .map(|observation| {
+                observation_log_score(observation, &bf_residual_quantiles, candidate)
+            })
+            .sum();
+        if log_likelihood > best_log_likelihood {
+            best_log_likelihood = log_likelihood;
+            concentration = candidate;
+        }
+    }
+    let mut calibration = KDistributionCalibration {
+        concentration,
+        bf_residual_quantiles,
+        training_rows: training.len(),
+        audit_rows: audit.len(),
+        audit_log_score: None,
+        gaussian_baseline_log_score: None,
+        compositional_strikeouts_mae: None,
+        direct_strikeouts_mae: None,
+        line_reliability: Vec::new(),
+    };
+    if audit.is_empty() {
+        return Ok(calibration);
+    }
+    let rows = audit.len() as f64;
+    let mut log_score = 0.0;
+    let mut gaussian_log_score = 0.0;
+    let mut compositional_error = 0.0;
+    let mut direct_error = 0.0;
+    let mut over_predictions: Vec<(f64, f64, usize)> = [3.5, 4.5, 5.5, 6.5, 7.5]
+        .map(|line| (line, 0.0, 0usize))
+        .into();
+    for observation in &audit {
+        let pmf = strikeout_pmf(
+            observation.k_rate_mean,
+            observation.batters_faced_mean,
+            &calibration.bf_residual_quantiles,
+            calibration.concentration,
+        );
+        let actual = observation.actual_strikeouts;
+        let k_index = (actual.round().max(0.0) as usize).min(MAX_STRIKEOUTS);
+        log_score += pmf[k_index].max(1e-12).ln();
+        let sd = observation.direct_sd.max(0.01);
+        let gaussian_probability = (normal_cdf((actual + 0.5 - observation.direct_mean) / sd)
+            - normal_cdf((actual - 0.5 - observation.direct_mean) / sd))
+        .max(1e-12);
+        gaussian_log_score += gaussian_probability.ln();
+        let pmf_mean: f64 = pmf
+            .iter()
+            .enumerate()
+            .map(|(k, probability)| k as f64 * probability)
+            .sum();
+        compositional_error += (pmf_mean - actual).abs();
+        direct_error += (observation.direct_mean - actual).abs();
+        for (line, predicted_sum, observed_count) in &mut over_predictions {
+            let predicted_over: f64 = pmf
+                .iter()
+                .enumerate()
+                .filter(|(k, _)| *k as f64 > *line)
+                .map(|(_, probability)| probability)
+                .sum();
+            *predicted_sum += predicted_over;
+            if actual > *line {
+                *observed_count += 1;
+            }
+        }
+    }
+    calibration.audit_log_score = Some(log_score / rows);
+    calibration.gaussian_baseline_log_score = Some(gaussian_log_score / rows);
+    calibration.compositional_strikeouts_mae = Some(compositional_error / rows);
+    calibration.direct_strikeouts_mae = Some(direct_error / rows);
+    calibration.line_reliability = over_predictions
+        .into_iter()
+        .map(|(line, predicted_sum, observed_count)| KLineReliability {
+            line,
+            rows: audit.len(),
+            mean_predicted_over: predicted_sum / rows,
+            observed_over_rate: observed_count as f64 / rows,
+        })
+        .collect();
+    Ok(calibration)
+}
+
+fn observation_log_score(
+    observation: &KObservation,
+    bf_residual_quantiles: &[f64],
+    concentration: f64,
+) -> f64 {
+    let pmf = strikeout_pmf(
+        observation.k_rate_mean,
+        observation.batters_faced_mean,
+        bf_residual_quantiles,
+        concentration,
+    );
+    let k = (observation.actual_strikeouts.round().max(0.0) as usize).min(MAX_STRIKEOUTS);
+    pmf[k].max(1e-12).ln()
 }
 
 fn confidence_calibration(
@@ -740,22 +1018,23 @@ pub fn time_split_validate(rows: &[FeatureRow]) -> Result<ValidationMetrics> {
     walk_forward_validate(rows, rows.len() * 4 / 5)
 }
 
-fn fit_target(
+/// Conjugate Normal-Inverse-Gamma regression. The observation noise sigma^2 is
+/// learned from the data instead of fixed: sigma^2 ~ InvGamma(a, b) with the
+/// prior mean set to `prior_noise_mean`, and beta | sigma^2 ~ N(m0, sigma^2 V0).
+/// With thousands of rows the data dominate and b_n/a_n approaches the
+/// residual variance, so intervals are honest at the source.
+fn fit_target_nig(
     rows: &[FeatureRow],
     target: impl Fn(&FeatureRow) -> Option<f64>,
     prior_intercept: f64,
-) -> Result<Posterior> {
-    fit_target_with_noise(rows, target, prior_intercept, 2.25)
-}
-
-fn fit_target_with_noise(
-    rows: &[FeatureRow],
-    target: impl Fn(&FeatureRow) -> Option<f64>,
-    prior_intercept: f64,
-    noise_variance: f64,
+    prior_noise_mean: f64,
 ) -> Result<Posterior> {
     let p = rows[0].values.len();
-    let prior_variance = 4.0;
+    let prior_shape = 3.0;
+    let prior_rate = prior_noise_mean * (prior_shape - 1.0);
+    // V0 is scaled so the marginal prior variance of each coefficient stays
+    // near the previous fixed value of 4.0 at the prior mean of sigma^2.
+    let prior_variance = 4.0 / prior_noise_mean;
     let mut precision = vec![vec![0.0; p]; p];
     let mut rhs = vec![0.0; p];
     for (j, row) in precision.iter_mut().enumerate() {
@@ -763,21 +1042,28 @@ fn fit_target_with_noise(
     }
     // Intercept prior centers on league-average outcomes; other coefficients center at zero.
     rhs[0] = prior_intercept / prior_variance;
+    let mut quadratic = prior_intercept * prior_intercept / prior_variance;
+    let mut count = 0.0;
     for row in rows {
         let y = target(row).ok_or_else(|| PnsError::Model("training target missing".into()))?;
+        quadratic += y * y;
+        count += 1.0;
         for (j, precision_row) in precision.iter_mut().enumerate() {
-            rhs[j] += row.values[j] * y / noise_variance;
+            rhs[j] += row.values[j] * y;
             for (k, cell) in precision_row.iter_mut().enumerate() {
-                *cell += row.values[j] * row.values[k] / noise_variance;
+                *cell += row.values[j] * row.values[k];
             }
         }
     }
     let covariance = invert(precision)?;
     let mean = mat_vec(&covariance, &rhs);
+    let noise_shape = prior_shape + count / 2.0;
+    let noise_rate = (prior_rate + 0.5 * (quadratic - dot(&mean, &rhs))).max(1e-9);
     Ok(Posterior {
         mean,
         covariance,
-        noise_variance,
+        noise_shape,
+        noise_rate,
     })
 }
 
@@ -789,13 +1075,103 @@ fn predict(p: &Posterior, x: &[f64]) -> Result<(f64, f64, f64)> {
     }
     let mean = dot(&p.mean, x);
     let covariance_x = mat_vec(&p.covariance, x);
-    let epistemic_variance = dot(x, &covariance_x).max(0.0);
-    let predictive_variance = p.noise_variance + epistemic_variance;
+    let scaled_epistemic = dot(x, &covariance_x).max(0.0);
+    let noise = p.noise_variance();
+    let epistemic_variance = noise * scaled_epistemic;
+    let predictive_variance = noise * (1.0 + scaled_epistemic);
     Ok((
         mean,
         predictive_variance.max(0.0).sqrt(),
         epistemic_variance.sqrt(),
     ))
+}
+
+/// Discrete strikeout distribution: a beta-binomial in the per-batter
+/// strikeout probability, mixed over an empirical distribution of batters
+/// faced. `bf_residual_quantiles` are walk-forward residuals of the
+/// batters-faced model, so workload uncertainty (early hooks, deep starts)
+/// shapes the tails instead of a symmetric bell curve.
+pub(crate) fn strikeout_pmf(
+    rate: f64,
+    batters: f64,
+    bf_residual_quantiles: &[f64],
+    concentration: f64,
+) -> Vec<f64> {
+    let rate = rate.clamp(0.03, 0.55);
+    let alpha = rate * concentration;
+    let beta = (1.0 - rate) * concentration;
+    let mut pmf = vec![0.0; MAX_STRIKEOUTS + 1];
+    for quantile in bf_residual_quantiles {
+        let faced = (batters + quantile).round().clamp(3.0, 45.0) as usize;
+        for (k, slot) in pmf
+            .iter_mut()
+            .enumerate()
+            .take(faced.min(MAX_STRIKEOUTS) + 1)
+        {
+            *slot += beta_binomial_pmf(k, faced, alpha, beta);
+        }
+    }
+    let total: f64 = pmf.iter().sum();
+    if total > 0.0 {
+        for value in &mut pmf {
+            *value /= total;
+        }
+    }
+    pmf
+}
+
+fn beta_binomial_pmf(k: usize, n: usize, alpha: f64, beta: f64) -> f64 {
+    let (k, n) = (k as f64, n as f64);
+    let ln_choose = ln_gamma(n + 1.0) - ln_gamma(k + 1.0) - ln_gamma(n - k + 1.0);
+    (ln_choose + ln_beta(k + alpha, n - k + beta) - ln_beta(alpha, beta)).exp()
+}
+
+fn ln_beta(a: f64, b: f64) -> f64 {
+    ln_gamma(a) + ln_gamma(b) - ln_gamma(a + b)
+}
+
+/// Lanczos approximation (g = 7, n = 9), accurate to ~1e-13 for x > 0.5.
+/// All call sites pass arguments >= 1 or positive beta-binomial shapes.
+fn ln_gamma(x: f64) -> f64 {
+    const COEFFICIENTS: [f64; 9] = [
+        0.999_999_999_999_809_9,
+        676.520_368_121_885_1,
+        -1_259.139_216_722_402_8,
+        771.323_428_777_653_1,
+        -176.615_029_162_140_6,
+        12.507_343_278_686_905,
+        -0.138_571_095_265_720_12,
+        9.984_369_578_019_572e-6,
+        1.505_632_735_149_311_6e-7,
+    ];
+    if x < 0.5 {
+        let pi = std::f64::consts::PI;
+        return pi.ln() - (pi * x).sin().ln() - ln_gamma(1.0 - x);
+    }
+    let x = x - 1.0;
+    let mut series = COEFFICIENTS[0];
+    for (index, coefficient) in COEFFICIENTS.iter().enumerate().skip(1) {
+        series += coefficient / (x + index as f64);
+    }
+    let t = x + 7.5;
+    0.5 * (2.0 * std::f64::consts::PI).ln() + (x + 0.5) * t.ln() - t + series.ln()
+}
+
+/// Abramowitz & Stegun 7.1.26, absolute error < 1.5e-7. Used only for the
+/// Gaussian-baseline log score in validation, never for pricing.
+fn erf(x: f64) -> f64 {
+    let sign = if x < 0.0 { -1.0 } else { 1.0 };
+    let x = x.abs();
+    let t = 1.0 / (1.0 + 0.327_591_1 * x);
+    let polynomial = t
+        * (0.254_829_592
+            + t * (-0.284_496_736
+                + t * (1.421_413_741 + t * (-1.453_152_027 + t * 1.061_405_429))));
+    sign * (1.0 - polynomial * (-x * x).exp())
+}
+
+fn normal_cdf(z: f64) -> f64 {
+    0.5 * (1.0 + erf(z / std::f64::consts::SQRT_2))
 }
 
 fn dot(a: &[f64], b: &[f64]) -> f64 {
@@ -880,9 +1256,11 @@ mod tests {
         let model = super::BayesianLinearModel::fit(&rows).unwrap();
         let projection = model.score(&rows[0]).unwrap();
         assert!(projection.runs_epistemic_sd < projection.runs_posterior_sd);
+        // Allow one ULP of float rounding when the band is not clipped at zero
+        // and the width equals posterior_width exactly.
         assert!(
             projection.posterior_width
-                >= projection.expected_runs_high - projection.expected_runs_low
+                >= projection.expected_runs_high - projection.expected_runs_low - 1e-12
         );
         if projection.expected_runs_low == 0.0 {
             assert!(
@@ -890,6 +1268,77 @@ mod tests {
                     > projection.expected_runs_high - projection.expected_runs_low
             );
         }
+    }
+
+    #[test]
+    fn nig_regression_learns_noise_variance_from_residuals() {
+        let rows: Vec<_> = (0..200)
+            .map(|index| crate::features::FeatureRow {
+                pitcher_id: 1,
+                as_of: NaiveDate::from_ymd_opt(2025, 4, 1).unwrap(),
+                values: vec![1.0],
+                starts_used: 5,
+                target_fip: None,
+                target_runs: Some(5.0 + if index % 2 == 0 { 1.5 } else { -1.5 }),
+                target_strikeouts: None,
+                target_innings: None,
+                target_batters_faced: None,
+                target_k_rate: None,
+            })
+            .collect();
+        let posterior = super::fit_target_nig(&rows, |r| r.target_runs, 5.0, 10.0).unwrap();
+        // Residual variance is exactly 2.25; the learned noise must land near it
+        // even though the prior mean was 10.0.
+        assert!((posterior.noise_variance() - 2.25).abs() < 0.5);
+        assert!((posterior.mean[0] - 5.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn ln_gamma_matches_known_values() {
+        assert!((super::ln_gamma(5.0) - 24f64.ln()).abs() < 1e-10);
+        assert!((super::ln_gamma(1.0)).abs() < 1e-12);
+        assert!((super::ln_gamma(0.5) - std::f64::consts::PI.sqrt().ln()).abs() < 1e-10);
+    }
+
+    #[test]
+    fn beta_binomial_pmf_is_a_distribution_with_the_expected_mean() {
+        let total: f64 = (0..=20)
+            .map(|k| super::beta_binomial_pmf(k, 20, 5.0, 20.0))
+            .sum();
+        assert!((total - 1.0).abs() < 1e-9);
+        let mean: f64 = (0..=20)
+            .map(|k| k as f64 * super::beta_binomial_pmf(k, 20, 5.0, 20.0))
+            .sum();
+        assert!((mean - 4.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn strikeout_pmf_normalizes_and_over_probabilities_decrease_with_the_line() {
+        let pmf = super::strikeout_pmf(0.25, 24.0, &[-6.0, 0.0, 5.0], 150.0);
+        assert_eq!(pmf.len(), super::MAX_STRIKEOUTS + 1);
+        assert!((pmf.iter().sum::<f64>() - 1.0).abs() < 1e-9);
+        let over = |line: f64| {
+            pmf.iter()
+                .enumerate()
+                .filter(|(k, _)| *k as f64 > line)
+                .map(|(_, probability)| probability)
+                .sum::<f64>()
+        };
+        assert!(over(3.5) > over(5.5));
+        assert!(over(5.5) > over(8.5));
+        let mean: f64 = pmf
+            .iter()
+            .enumerate()
+            .map(|(k, probability)| k as f64 * probability)
+            .sum();
+        assert!((mean - 0.25 * 24.0).abs() < 1.5);
+    }
+
+    #[test]
+    fn normal_cdf_is_symmetric_and_accurate() {
+        assert!((super::normal_cdf(0.0) - 0.5).abs() < 1e-9);
+        assert!((super::normal_cdf(1.645) - 0.95).abs() < 0.001);
+        assert!((super::normal_cdf(-1.645) - 0.05).abs() < 0.001);
     }
 
     #[test]

@@ -3,6 +3,7 @@ pub mod data;
 pub mod error;
 pub mod features;
 pub mod model;
+pub mod paper;
 pub mod tracking;
 
 use chrono::Datelike;
@@ -42,6 +43,13 @@ struct PredictionCsv<'a> {
     expected_strikeouts_high: f64,
     expected_innings_low: f64,
     expected_innings_high: f64,
+    expected_strikeouts_compositional: f64,
+    p_strikeouts_over_3_5: f64,
+    p_strikeouts_over_4_5: f64,
+    p_strikeouts_over_5_5: f64,
+    p_strikeouts_over_6_5: f64,
+    p_strikeouts_over_7_5: f64,
+    p_strikeouts_over_8_5: f64,
     confidence: Confidence,
     recent_k_rate: f64,
     recent_bb_rate: f64,
@@ -54,6 +62,14 @@ struct PredictionCsv<'a> {
     opponent_offense_factor: f64,
     judgment: &'a str,
     team_model_input: Option<f64>,
+}
+
+fn over_probability(card: &DecisionCard, line: f64) -> f64 {
+    card.strikeout_over_probabilities
+        .iter()
+        .find(|entry| entry.line == line)
+        .map(|entry| entry.probability)
+        .unwrap_or(0.0)
 }
 
 impl<'a> PredictionCsv<'a> {
@@ -78,6 +94,13 @@ impl<'a> PredictionCsv<'a> {
             expected_strikeouts_high: card.expected_strikeouts_high,
             expected_innings_low: card.expected_innings_low,
             expected_innings_high: card.expected_innings_high,
+            expected_strikeouts_compositional: card.expected_strikeouts_compositional,
+            p_strikeouts_over_3_5: over_probability(card, 3.5),
+            p_strikeouts_over_4_5: over_probability(card, 4.5),
+            p_strikeouts_over_5_5: over_probability(card, 5.5),
+            p_strikeouts_over_6_5: over_probability(card, 6.5),
+            p_strikeouts_over_7_5: over_probability(card, 7.5),
+            p_strikeouts_over_8_5: over_probability(card, 8.5),
             confidence: card.confidence,
             recent_k_rate: card.recent_k_rate,
             recent_bb_rate: card.recent_bb_rate,
@@ -190,8 +213,8 @@ fn find_model_artifact() -> Option<PathBuf> {
     }
     let current = std::env::current_dir().ok()?;
     [
-        current.join("models/pns-model-v1.json"),
-        current.join("../models/pns-model-v1.json"),
+        current.join("models/pns-model-v2.json"),
+        current.join("../models/pns-model-v2.json"),
     ]
     .into_iter()
     .find(|path| path.exists())
@@ -201,7 +224,7 @@ fn load_model_artifact() -> Result<model::artifact::ModelArtifact> {
     if let Some(path) = find_model_artifact() {
         return model::artifact::ModelArtifact::load(path);
     }
-    model::artifact::ModelArtifact::from_json(include_str!("../../../models/pns-model-v1.json"))
+    model::artifact::ModelArtifact::from_json(include_str!("../../../models/pns-model-v2.json"))
 }
 
 #[cfg(test)]
@@ -244,7 +267,7 @@ fn score_normalized_detailed(
     }
     Ok(ScoredSlate {
         cards,
-        validation: artifact.validation,
+        validation: artifact.validation.clone(),
         model: artifact.info(),
         generated_at: chrono::Utc::now().to_rfc3339(),
     })
@@ -344,6 +367,26 @@ mod tests {
         assert!(cards.iter().all(|card| card.history_starts >= 5));
         assert!(cards.iter().all(|card| card.expected_innings > 0.0));
         assert!(cards.iter().all(|card| card.expected_strikeouts >= 0.0));
+        assert!(
+            cards
+                .iter()
+                .all(|card| card.strikeout_over_probabilities.len() == 6)
+        );
+        assert!(cards.iter().all(|card| {
+            card.strikeout_over_probabilities
+                .windows(2)
+                .all(|pair| pair[0].probability >= pair[1].probability)
+        }));
+        assert!(
+            cards
+                .iter()
+                .all(|card| (card.strikeout_probabilities.iter().sum::<f64>() - 1.0).abs() < 0.01)
+        );
+        assert!(
+            cards
+                .iter()
+                .all(|card| card.expected_strikeouts_compositional > 0.0)
+        );
         assert!(cards.iter().all(|card| {
             card.recent_starts
                 .iter()

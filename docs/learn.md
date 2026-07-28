@@ -58,7 +58,9 @@ Intuition:
 
 ### Family (locked)
 
-Four independent Bayesian linear regressions: next-start FIP, runs allowed, innings pitched, and strikeouts. They share a feature pipeline but have separate coefficients, priors, observation noise, and posteriors.
+Six independent Bayesian linear regressions sharing one feature pipeline: next-start FIP, runs allowed, innings pitched, and strikeouts (the four card targets), plus per-batter strikeout rate and batters faced (the two components that build the discrete strikeout distribution below). Each has separate coefficients, priors, observation noise, and posteriors.
+
+Observation noise is **learned, not assumed**. Each regression is a conjugate Normal-Inverse-Gamma model: the noise variance has an Inverse-Gamma prior whose mean is a documented default, and the posterior noise is estimated from the training residuals. With thousands of starts the data dominate, so predictive intervals are honest at the source instead of relying entirely on after-the-fact rescaling.
 
 Training and scoring are deliberately separate. Walk-forward validation and final fitting produce a versioned model artifact with the four posteriors, standardization values, interval calibration, confidence audit, feature contract, and training cutoff. A daily slate loads that frozen artifact and builds only the probable starters' live feature rows, so unrelated slate composition cannot change the fitted model or confidence boundaries.
 
@@ -151,7 +153,7 @@ Practical product effect:
 - a pitcher with 2 weird starts does **not** get a wild card
 - a pitcher with a longer, coherent form signal can move farther from the prior
 
-The conjugate implementation uses independent Gaussian coefficient priors with variance **4.0**. Intercept priors center at **4.20 FIP**, **3.0 runs**, **5.3 innings**, and **5.2 strikeouts**. Each target has its own posterior; innings and strikeouts are not derived from expected runs. These are inspectable defaults, not universal baseball constants.
+The conjugate implementation uses independent Gaussian coefficient priors with marginal variance **4.0** at the prior noise level. Intercept priors center at **4.20 FIP**, **3.0 runs**, **5.3 innings**, **5.2 strikeouts**, a **0.22** per-batter strikeout rate, and **24 batters faced**. Noise-variance priors center at the previous fixed constants (2.25 for FIP and runs, 6.25 for strikeouts, 1.0 for innings) but are updated by the residuals, so a misjudged constant cannot silently distort the bands. Each target has its own posterior; innings and strikeouts are not derived from expected runs. These are inspectable defaults, not universal baseball constants.
 
 ---
 
@@ -165,10 +167,26 @@ Each model produces its own posterior. The card is a translation layer across al
 | `expected_runs_low / base / high` | Runs allowed band for the outing | Credible interval + central estimate from posterior predictive (or calibrated mapping from FIP) |
 | `expected_innings` | Expected starter workload | Posterior mean from the innings model |
 | `expected_strikeouts` | Expected strikeout total | Posterior mean from the strikeout model |
+| `expected_strikeouts_compositional` | Mean of the discrete strikeout distribution | Beta-binomial mixture (below) |
+| `strikeout_over_probabilities` | P(strikeouts > line) for lines 3.5–8.5 | Discrete strikeout distribution |
 | `confidence` | high / medium / low | Walk-forward-calibrated run uncertainty + recent-start sample strength |
 | `judgment` | One sentence a human can act on | Rule/template over projection + confidence + context |
 | `prop_lean` (optional) | Betting-facing lean | Derived from projection vs market/context later |
 | `team_model_input` | Expected runs allowed input | Central runs estimate (and optionally band) |
+
+### The discrete strikeout distribution
+
+Strikeouts are counts, and betting lines ask for tail probabilities such as P(K ≥ 6.5) — a Gaussian mean-and-band cannot price that honestly. The app therefore builds a full probability for every strikeout total:
+
+1. The **per-batter strikeout rate** model predicts \(\hat{p}\), the chance this pitcher strikes out any given batter in this context.
+2. The **batters faced** model predicts workload \(\hat{b}\), and its walk-forward residual quantiles form an empirical workload distribution — early hooks and deep starts shape the tails instead of a symmetric bell curve.
+3. For each workload draw, strikeouts follow a **beta-binomial**: a binomial in \(\hat{p}\) whose game-to-game variability is governed by a concentration parameter.
+
+\[
+P(K = k) = \sum_{b} P(\text{BF} = b)\; \text{BetaBin}(k;\, b,\, \hat{p}\nu,\, (1-\hat{p})\nu)
+\]
+
+The concentration \(\nu\) is chosen by maximizing predictive log-likelihood on the earlier 70% of held-out walk-forward dates. The later 30% — which had no say in that choice — audits the distribution: mean log score against the old Gaussian treatment, point MAE for both estimators, and predicted-versus-observed frequency at each common prop line. Those numbers live in `outputs/validation.json` under `k_distribution`.
 
 ### Confidence calibration
 

@@ -26,6 +26,22 @@ pub struct Projection {
     pub expected_innings_high: f64,
     pub strikeouts_posterior_sd: f64,
     pub innings_posterior_sd: f64,
+    pub k_rate_mean: f64,
+    pub batters_faced_mean: f64,
+    pub expected_strikeouts_compositional: f64,
+    pub strikeout_probabilities: Vec<f64>,
+}
+
+impl Projection {
+    /// P(strikeouts > line) from the discrete distribution, e.g. line = 5.5.
+    pub fn prob_strikeouts_over(&self, line: f64) -> f64 {
+        self.strikeout_probabilities
+            .iter()
+            .enumerate()
+            .filter(|(k, _)| *k as f64 > line)
+            .map(|(_, probability)| probability)
+            .sum()
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -34,6 +50,12 @@ pub enum Confidence {
     High,
     Medium,
     Low,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct StrikeoutOverProbability {
+    pub line: f64,
+    pub probability: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +107,9 @@ pub struct DecisionCard {
     pub expected_strikeouts_high: f64,
     pub expected_innings_low: f64,
     pub expected_innings_high: f64,
+    pub expected_strikeouts_compositional: f64,
+    pub strikeout_over_probabilities: Vec<StrikeoutOverProbability>,
+    pub strikeout_probabilities: Vec<f64>,
     pub confidence: Confidence,
     pub judgment: String,
     pub outlook_summary: String,
@@ -273,6 +298,19 @@ pub fn build_card(
         expected_strikeouts_high: round2(p.expected_strikeouts_high),
         expected_innings_low: round2(p.expected_innings_low),
         expected_innings_high: round2(p.expected_innings_high),
+        expected_strikeouts_compositional: round2(p.expected_strikeouts_compositional),
+        strikeout_over_probabilities: [3.5, 4.5, 5.5, 6.5, 7.5, 8.5]
+            .iter()
+            .map(|line| StrikeoutOverProbability {
+                line: *line,
+                probability: round3(p.prob_strikeouts_over(*line)),
+            })
+            .collect(),
+        strikeout_probabilities: p
+            .strikeout_probabilities
+            .iter()
+            .map(|value| round4(*value))
+            .collect(),
         confidence,
         judgment,
         outlook_summary,
@@ -384,6 +422,9 @@ fn round2(value: f64) -> f64 {
 }
 fn round3(value: f64) -> f64 {
     (value * 1000.0).round() / 1000.0
+}
+fn round4(value: f64) -> f64 {
+    (value * 10000.0).round() / 10000.0
 }
 
 pub fn render_markdown(card: &DecisionCard) -> String {

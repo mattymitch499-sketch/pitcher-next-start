@@ -1,6 +1,7 @@
 pub mod context;
 pub mod dataset;
 pub mod enrich;
+pub mod kalshi;
 pub mod pitcher_logs;
 pub mod schedule;
 pub mod types;
@@ -66,7 +67,10 @@ impl MlbStatsClient {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<types::PitcherStartLog>> {
-        let response = self.request_text(
+        // A "no games yet" answer (queried before MLB posts a just-finished
+        // box score) must not be cached for the full TTL, or a real result
+        // minutes later would stay hidden behind a stale empty cache entry.
+        let response = self.request_text_if(
             self.http
                 .get(format!("{}/people/{pitcher_id}/stats", self.base_url))
                 .query(&[
@@ -78,6 +82,7 @@ impl MlbStatsClient {
                 ]),
             &format!("logs-{pitcher_id}-{start}-{end}"),
             21_600,
+            has_game_log_splits,
         )?;
         let starts = pitcher_logs::normalize_game_log(&response)?;
         if starts.is_empty() {
@@ -86,6 +91,25 @@ impl MlbStatsClient {
             )));
         }
         Ok(starts)
+    }
+
+    /// If `pitcher_id` was probable in a postponed game on `date`, returns
+    /// the date MLB rescheduled it to (once announced).
+    pub fn postponed_reschedule_date(
+        &self,
+        pitcher_id: u32,
+        date: NaiveDate,
+    ) -> Result<Option<NaiveDate>> {
+        let response = self.request_text(
+            self.http.get(format!("{}/schedule", self.base_url)).query(&[
+                ("sportId", "1"),
+                ("date", &date.to_string()),
+                ("hydrate", "probablePitcher"),
+            ]),
+            &format!("reschedule-{pitcher_id}-{date}"),
+            3_600,
+        )?;
+        schedule::find_reschedule(&response, pitcher_id)
     }
 
     pub fn season_starters(&self, season: i32, minimum_starts: u16) -> Result<Vec<u32>> {
@@ -173,6 +197,18 @@ impl MlbStatsClient {
         cache_key: &str,
         ttl_seconds: u64,
     ) -> Result<String> {
+        self.request_text_if(request, cache_key, ttl_seconds, |_| true)
+    }
+
+    /// Like [`Self::request_text`], but a freshly-fetched response is only
+    /// written to the cache when `cacheable` returns true for it.
+    fn request_text_if(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+        cache_key: &str,
+        ttl_seconds: u64,
+        cacheable: impl Fn(&str) -> bool,
+    ) -> Result<String> {
         let cache_path = cache_path(cache_key);
         if cache_is_fresh(&cache_path, ttl_seconds) {
             return Ok(std::fs::read_to_string(cache_path)?);
@@ -188,10 +224,12 @@ impl MlbStatsClient {
                 .and_then(|response| response.text())
             {
                 Ok(text) => {
-                    if let Some(parent) = cache_path.parent() {
-                        std::fs::create_dir_all(parent)?;
+                    if cacheable(&text) {
+                        if let Some(parent) = cache_path.parent() {
+                            std::fs::create_dir_all(parent)?;
+                        }
+                        std::fs::write(&cache_path, &text)?;
                     }
-                    std::fs::write(&cache_path, &text)?;
                     return Ok(text);
                 }
                 Err(error) => {
@@ -211,6 +249,16 @@ impl MlbStatsClient {
     }
 }
 
+/// True when a `stats?stats=gameLog` response actually contains at least
+/// one game (i.e. the box score has been posted), so an empty "not final
+/// yet" answer never gets locked into the cache.
+fn has_game_log_splits(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| value["stats"][0]["splits"].as_array().map(|splits| !splits.is_empty()))
+        .unwrap_or(false)
+}
+
 fn cache_path(key: &str) -> PathBuf {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut hasher);
@@ -225,4 +273,16 @@ fn cache_is_fresh(path: &Path, ttl_seconds: u64) -> bool {
         .ok()
         .and_then(|modified| SystemTime::now().duration_since(modified).ok())
         .is_some_and(|age| age.as_secs() <= ttl_seconds)
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn game_log_splits_detects_empty_vs_populated_responses() {
+        let empty = r#"{"stats":[{"type":{"displayName":"gameLog"},"splits":[]}]}"#;
+        let populated = r#"{"stats":[{"type":{"displayName":"gameLog"},"splits":[{"date":"2026-07-21"}]}]}"#;
+        assert!(!super::has_game_log_splits(empty));
+        assert!(super::has_game_log_splits(populated));
+        assert!(!super::has_game_log_splits("not json"));
+    }
 }

@@ -1,3 +1,55 @@
+# Paper trading against Kalshi strikeout markets
+
+## Goal
+
+Grade the v2 strikeout distribution against live market prices without wagering: log every matched Kalshi pitcher-strikeout market with the model's probability, open simulated one-contract positions when the edge is at least 5 points, and settle against completed box scores.
+
+## Implementation
+
+- [x] `data/kalshi.rs`: public no-auth client for the `KXMLBKS` series with cursor pagination and bounded retries; ticker date/threshold parser; subtitle name extraction.
+- [x] `paper.rs`: name normalization with diacritic folding, market↔card matching by pitcher and slate date, edge-based side selection (YES at ask / NO at 100−bid, spread- and quote-sanity gated), first-record-wins CSV log under the app-data dir, grading via completed MLB game logs, and a running summary (P&L, ROI, record, calibration of logged probabilities).
+- [x] Tauri commands `paper_trading_update` (score slate → fetch markets → record → grade) and `paper_trading_status` (read-only).
+- [x] Svelte "Paper trading" page: summary cards plus a daily log table using the existing validation styling; additive TypeScript types.
+
+## Verification
+
+- [x] `cargo fmt` / strict clippy / `cargo test --workspace` (40 tests, 7 new), `pnpm check` (0 errors), `pnpm test -- --run`, `pnpm build`.
+- [x] Live Kalshi API verified: per-pitcher markets exist at thresholds 4+ through 11+, matching the model's discrete distribution exactly.
+
+## Review
+
+- Markets without two-sided sane quotes are logged for calibration but never bet; thin books are expected on Kalshi props.
+- Scratched starters stay ungraded rather than guessing settlement; a future pass could void entries older than a few days.
+- The 5-point edge threshold and 30-cent max spread are inspectable constants in `paper.rs`.
+
+# Model v2: learned noise and a discrete strikeout distribution
+
+## Goal
+
+Make the model price-capable for strikeout props: learn observation noise from data instead of fixing it, and produce a full discrete P(K = k) distribution so P(over line) is a model output rather than a Gaussian approximation.
+
+## Implementation
+
+- [x] Replaced fixed-noise conjugate regression with Normal-Inverse-Gamma updates for all targets; predictive variance is now `(b_n/a_n) * (1 + x'V_n x)` with the old constants demoted to prior means.
+- [x] Added per-batter strikeout-rate and batters-faced regressions to the shared feature pipeline (targets already existed in the normalized data).
+- [x] Built the compositional strikeout distribution: beta-binomial in the K rate, mixed over 19 empirical batters-faced residual quantiles; hand-rolled Lanczos ln-gamma, no new dependencies.
+- [x] Calibrated the beta-binomial concentration by predictive log-likelihood on the earlier 70% of held-out dates; audited the later 30% with log score vs the old Gaussian treatment, both point MAEs, and over-line reliability at 3.5–7.5.
+- [x] Bumped the artifact to schema v2 (`models/pns-model-v2.json`, id prefix `pns-blr-v2`), added invariant checks for the new posterior and distribution fields.
+- [x] Surfaced `expected_strikeouts_compositional`, the pmf, and P(K over 3.5–8.5) through DecisionCard, the CSV export, and TypeScript types (UI rendering unchanged).
+
+## Verification
+
+- [x] `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo test --workspace` (33 tests), `pnpm check`, `pnpm test -- --run`, `pnpm build`.
+- [x] Two independent training runs produced byte-identical artifacts (SHA-256 `1c3df2b1ddf16f1e9a34f952c391afe8582389cda3f95f3b699d6e5bdd06f550`).
+- [x] Regenerated `outputs/` from the frozen v2 artifact.
+
+## Review
+
+- Raw 90% runs interval coverage moved from 0.805 (fixed noise, too narrow) to 0.923; the empirical rescale now nudges rather than rescues (recommended scale 0.87 vs 1.14).
+- Point MAEs unchanged to four decimals — learned noise affects widths, not means, exactly as expected at n = 16,477.
+- Strikeout distribution audit (754 later-date rows with no say in calibration): log score −2.2225 vs −2.2508 for the Gaussian baseline; selected concentration 75. Over-line reliability at 6.5: predicted 27.1% vs observed 26.9%; at 7.5: 16.74% vs 16.71%. Lines 3.5/4.5 run ~2–3 points optimistic — left-tail (early hook) mass is still slightly light; candidate follow-up is a hook-aware batters-faced mixture.
+- Compositional MAE 1.8584 vs direct 1.8594 on the same audit rows; the card keeps the direct estimate for continuity, with the compositional mean exported alongside.
+
 # Versioned model artifacts
 
 ## Smoke-test follow-up: explanation and 2026 freshness

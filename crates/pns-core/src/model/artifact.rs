@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const MODEL_ARTIFACT_SCHEMA_VERSION: u32 = 1;
+pub const MODEL_ARTIFACT_SCHEMA_VERSION: u32 = 2;
 pub const DEFAULT_HISTORY_WINDOW: usize = 5;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -67,7 +67,8 @@ impl ModelArtifact {
             .with_aux_interval_scales(
                 validation.recommended_strikeouts_interval_scale,
                 validation.recommended_innings_interval_scale,
-            );
+            )
+            .with_k_distribution(&validation.k_distribution);
         let first_start_date = starts
             .iter()
             .map(|start| start.game_date)
@@ -114,7 +115,7 @@ impl ModelArtifact {
         let digest = Sha256::digest(payload);
         let digest_hex = format!("{digest:x}");
         Ok(format!(
-            "pns-blr-v1-{}-{}",
+            "pns-blr-v2-{}-{}",
             self.training.data_through,
             &digest_hex[..12]
         ))

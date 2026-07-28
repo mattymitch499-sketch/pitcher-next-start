@@ -1,25 +1,25 @@
 {
   "held_out_rows": 2596,
   "held_out_dates": 107,
-  "fip_mae": 2.025566942204595,
-  "runs_mae": 1.6010335621762826,
-  "strikeouts_mae": 1.819244147423096,
+  "fip_mae": 2.025566942204446,
+  "runs_mae": 1.6010335621762084,
+  "strikeouts_mae": 1.8192441474231589,
   "innings_mae": 0.8901819997758954,
-  "strikeouts_interval_coverage": 0.9322033898305084,
-  "innings_interval_coverage": 0.8597842835130971,
+  "strikeouts_interval_coverage": 0.9075500770416024,
+  "innings_interval_coverage": 0.9140986132511556,
   "calibrated_strikeouts_interval_coverage": 0.900231124807396,
   "calibrated_innings_interval_coverage": 0.900231124807396,
-  "recommended_strikeouts_interval_scale": 0.908856316595451,
-  "recommended_innings_interval_scale": 1.1558792179362352,
+  "recommended_strikeouts_interval_scale": 0.9820357368928536,
+  "recommended_innings_interval_scale": 0.9445330948391816,
   "league_strikeouts_mae": 1.95157485853852,
   "pitcher_history_strikeouts_mae": 1.8552639823841992,
   "last_five_strikeouts_mae": 1.9268608720374245,
   "league_innings_mae": 0.945544851000482,
   "pitcher_history_innings_mae": 0.9262988389644012,
   "last_five_innings_mae": 0.9646947880153242,
-  "runs_interval_coverage": 0.8046995377503852,
+  "runs_interval_coverage": 0.9229583975346688,
   "calibrated_runs_interval_coverage": 0.900231124807396,
-  "recommended_interval_scale": 1.1435798137926791,
+  "recommended_interval_scale": 0.8733795552249147,
   "league_fip_mae": 2.074455691863371,
   "pitcher_history_fip_mae": 2.0405287701468935,
   "last_five_fip_mae": 2.1882214110434637,
@@ -27,8 +27,8 @@
   "pitcher_history_runs_mae": 1.6178410583998155,
   "last_five_runs_mae": 1.7061438123166457,
   "confidence_calibration": {
-    "high_max_normalized_epistemic_score": 4.805719454482273,
-    "medium_max_normalized_epistemic_score": 5.824148784221399,
+    "high_max_normalized_epistemic_score": 6.289979390003411,
+    "medium_max_normalized_epistemic_score": 7.6386004498657964,
     "threshold_training_rows": 1797,
     "training_period_dates": 75,
     "tiers_validated": false,
@@ -40,19 +40,81 @@
     "dates": 32,
     "high": {
       "rows": 256,
-      "runs_mae": 1.6217926074366371
+      "runs_mae": 1.6217926074365572
     },
     "medium": {
-      "rows": 270,
-      "runs_mae": 1.6840565532628402
+      "rows": 272,
+      "runs_mae": 1.6809144426086944
     },
     "low": {
-      "rows": 207,
-      "runs_mae": 1.58409041660499
+      "rows": 205,
+      "runs_mae": 1.5872841816030212
     },
     "short_history": {
       "rows": 21,
-      "runs_mae": 1.5878263326782571
+      "runs_mae": 1.5878263326781403
     }
+  },
+  "k_distribution": {
+    "concentration": 75.0,
+    "bf_residual_quantiles": [
+      -5.759620914400369,
+      -3.889988713728872,
+      -3.0810142932661257,
+      -2.3209152633704946,
+      -1.78251501941347,
+      -1.272189534755363,
+      -0.8918833783051809,
+      -0.5820596865696963,
+      -0.2153568067603402,
+      0.13225136669047188,
+      0.4132603438980525,
+      0.7868192823560314,
+      1.1964086453095746,
+      1.5726043752909398,
+      1.992804632196659,
+      2.508978967174965,
+      3.118271428340087,
+      3.892033645373406,
+      5.083198537259378
+    ],
+    "training_rows": 1842,
+    "audit_rows": 754,
+    "audit_log_score": -2.2224646606485736,
+    "gaussian_baseline_log_score": -2.2507843692892804,
+    "compositional_strikeouts_mae": 1.8583865337116676,
+    "direct_strikeouts_mae": 1.85944122354908,
+    "line_reliability": [
+      {
+        "line": 3.5,
+        "rows": 754,
+        "mean_predicted_over": 0.7220204152145028,
+        "observed_over_rate": 0.6883289124668435
+      },
+      {
+        "line": 4.5,
+        "rows": 754,
+        "mean_predicted_over": 0.5632438377569075,
+        "observed_over_rate": 0.5397877984084881
+      },
+      {
+        "line": 5.5,
+        "rows": 754,
+        "mean_predicted_over": 0.40590169778628127,
+        "observed_over_rate": 0.38461538461538464
+      },
+      {
+        "line": 6.5,
+        "rows": 754,
+        "mean_predicted_over": 0.2706403787763024,
+        "observed_over_rate": 0.2692307692307692
+      },
+      {
+        "line": 7.5,
+        "rows": 754,
+        "mean_predicted_over": 0.1674237177035477,
+        "observed_over_rate": 0.16710875331564987
+      }
+    ]
   }
 }

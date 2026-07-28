@@ -33,6 +33,8 @@ pub struct FeatureRow {
     pub target_runs: Option<f64>,
     pub target_strikeouts: Option<f64>,
     pub target_innings: Option<f64>,
+    pub target_batters_faced: Option<f64>,
+    pub target_k_rate: Option<f64>,
 }
 
 fn build(
@@ -119,6 +121,8 @@ fn build(
         target_runs: None,
         target_strikeouts: None,
         target_innings: None,
+        target_batters_faced: None,
+        target_k_rate: None,
     })
 }
 
@@ -145,6 +149,9 @@ pub fn historical_rows(starts: &[PitcherStartLog], window: usize) -> Result<Vec<
             row.target_runs = Some(current.earned_runs as f64);
             row.target_strikeouts = Some(current.strikeouts as f64);
             row.target_innings = Some(current.innings_pitched);
+            let batters = (current.batters_faced as f64).max(1.0);
+            row.target_batters_faced = Some(batters);
+            row.target_k_rate = Some((current.strikeouts as f64 / batters).clamp(0.0, 1.0));
             rows.push(row);
         }
     }

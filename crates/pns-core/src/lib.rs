@@ -4,6 +4,7 @@ pub mod error;
 pub mod features;
 pub mod model;
 pub mod paper;
+pub mod paper_stats;
 pub mod tracking;
 
 use chrono::Datelike;

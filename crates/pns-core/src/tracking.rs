@@ -18,6 +18,15 @@ pub struct TrackedPrediction {
     pub expected_runs: f64,
     pub expected_innings: f64,
     pub expected_strikeouts: f64,
+    /// The predicted strikeout interval. Recorded so a genuine out-of-sample
+    /// coverage check becomes possible later: `predictions.csv` already pairs
+    /// real forward predictions with actuals, but without the bounds there is
+    /// nothing to score coverage against. Rows written before this field
+    /// existed read back as `None`.
+    #[serde(default)]
+    pub expected_strikeouts_low: Option<f64>,
+    #[serde(default)]
+    pub expected_strikeouts_high: Option<f64>,
     pub actual_fip: Option<f64>,
     pub actual_runs: Option<f64>,
     pub actual_innings: Option<f64>,
@@ -69,6 +78,8 @@ pub fn record_predictions(
                 expected_runs: card.expected_runs_base,
                 expected_innings: card.expected_innings,
                 expected_strikeouts: card.expected_strikeouts,
+                expected_strikeouts_low: Some(card.expected_strikeouts_low),
+                expected_strikeouts_high: Some(card.expected_strikeouts_high),
                 actual_fip: actual.as_ref().and_then(|row| row.actual_fip),
                 actual_runs: actual.as_ref().and_then(|row| row.actual_runs),
                 actual_innings: actual.as_ref().and_then(|row| row.actual_innings),

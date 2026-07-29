@@ -50,6 +50,16 @@ pub struct PaperEntry {
     /// and this entry has been excluded from grading and calibration.
     #[serde(default)]
     pub voided: bool,
+    /// The model's mean and spread for this start. Recorded so calibration can
+    /// later be binned by how far into the tail a threshold sits —
+    /// `(threshold - mean) / sd` — which `model_probability` alone cannot
+    /// separate, since a low probability means either a high threshold on a
+    /// normal pitcher or a moderate one on a weak pitcher. Rows written before
+    /// this field existed read back as `None`.
+    #[serde(default)]
+    pub model_expected_strikeouts: Option<f64>,
+    #[serde(default)]
+    pub model_sd_strikeouts: Option<f64>,
     pub model_artifact_id: String,
 }
 
@@ -72,6 +82,10 @@ pub struct PaperSummary {
 pub struct PaperLog {
     pub entries: Vec<PaperEntry>,
     pub summary: PaperSummary,
+    /// Cluster-aware view of the same entries. `summary` counts every logged
+    /// market as one observation; this one counts pitcher-starts, which is the
+    /// unit that actually resolves independently.
+    pub clustering: crate::paper_stats::ClusterStats,
 }
 
 pub fn log_path(root: impl AsRef<Path>) -> PathBuf {
@@ -126,6 +140,27 @@ fn model_over_probability(card: &DecisionCard, threshold: u16) -> Option<f64> {
             .map(|(_, probability)| probability)
             .sum(),
     )
+}
+
+/// Mean and standard deviation of a card's discrete strikeout distribution.
+/// `strikeout_probabilities` is a PMF: index `k` holds P(exactly k strikeouts).
+fn model_moments(card: &DecisionCard) -> Option<(f64, f64)> {
+    if card.strikeout_probabilities.is_empty() {
+        return None;
+    }
+    let mean: f64 = card
+        .strikeout_probabilities
+        .iter()
+        .enumerate()
+        .map(|(k, probability)| k as f64 * probability)
+        .sum();
+    let variance: f64 = card
+        .strikeout_probabilities
+        .iter()
+        .enumerate()
+        .map(|(k, probability)| (k as f64 - mean).powi(2) * probability)
+        .sum();
+    Some((mean, variance.max(0.0).sqrt()))
 }
 
 /// Chooses a paper position when a live two-sided quote disagrees with the
@@ -194,6 +229,7 @@ pub(crate) fn match_markets(
             market.yes_ask,
             edge_threshold,
         );
+        let moments = model_moments(card);
         entries.push(PaperEntry {
             market_ticker: market.ticker.clone(),
             event_date: event_date.to_string(),
@@ -211,10 +247,56 @@ pub(crate) fn match_markets(
             result_yes: None,
             profit_cents: None,
             voided: false,
+            model_expected_strikeouts: moments.map(|(mean, _)| mean),
+            model_sd_strikeouts: moments.map(|(_, sd)| sd),
             model_artifact_id: model.artifact_id.clone(),
         });
     }
+    reconcile_start_positions(&mut entries);
     entries
+}
+
+/// Clears mutually exclusive positions inside a single start.
+///
+/// A NO at threshold `a` pays only when K < a, and a YES at `b > a` only when
+/// K >= b. The pair can never both win, and whenever `a <= K < b` both lose —
+/// so holding them together is strictly worse than holding either alone,
+/// whatever the model believes. The leg with the smaller edge behind it is
+/// demoted to log-only; the row itself stays so it still counts for
+/// calibration.
+///
+/// The mirror image — YES low with NO high — is deliberately left alone. That
+/// is a coherent bet that K lands inside a range, and both legs can win.
+fn reconcile_start_positions(entries: &mut [PaperEntry]) {
+    let mut by_start: BTreeMap<(u32, String), Vec<usize>> = BTreeMap::new();
+    for (index, entry) in entries.iter().enumerate() {
+        if entry.side.is_some() {
+            by_start
+                .entry((entry.pitcher_id, entry.event_date.clone()))
+                .or_default()
+                .push(index);
+        }
+    }
+    for indices in by_start.values() {
+        // Each pass demotes exactly one leg, so this terminates.
+        while let Some((low, high)) = indices.iter().find_map(|&low| {
+            indices.iter().find_map(|&high| {
+                (entries[low].side == Some(Side::No)
+                    && entries[high].side == Some(Side::Yes)
+                    && entries[high].threshold > entries[low].threshold)
+                    .then_some((low, high))
+            })
+        }) {
+            let loser = if entries[low].edge.unwrap_or(0.0) < entries[high].edge.unwrap_or(0.0) {
+                low
+            } else {
+                high
+            };
+            entries[loser].side = None;
+            entries[loser].entry_price_cents = None;
+            entries[loser].edge = None;
+        }
+    }
 }
 
 /// Applies a completed start to an entry: settles the YES question and, when a
@@ -392,13 +474,23 @@ pub fn update(
     record_slate(cards, &markets, model, &root)?;
     let entries = grade_log(&root)?;
     let summary = summarize(&entries);
-    Ok(PaperLog { entries, summary })
+    let clustering = crate::paper_stats::cluster_stats(&entries);
+    Ok(PaperLog {
+        entries,
+        summary,
+        clustering,
+    })
 }
 
 pub fn status(root: impl AsRef<Path>) -> Result<PaperLog> {
     let entries = read_log(root)?;
     let summary = summarize(&entries);
-    Ok(PaperLog { entries, summary })
+    let clustering = crate::paper_stats::cluster_stats(&entries);
+    Ok(PaperLog {
+        entries,
+        summary,
+        clustering,
+    })
 }
 
 fn write_log(path: &Path, entries: &[PaperEntry]) -> Result<()> {
@@ -449,6 +541,57 @@ mod tests {
     }
 
     #[test]
+    fn drops_the_weaker_leg_of_a_mutually_exclusive_pair() {
+        let entry = |threshold: u16, side: super::Side, edge: f64| super::PaperEntry {
+            market_ticker: format!("T-{threshold}"),
+            event_date: "2026-07-22".into(),
+            pitcher_id: 1,
+            pitcher_name: "Test".into(),
+            threshold,
+            model_probability: 0.5,
+            yes_bid: Some(40),
+            yes_ask: Some(45),
+            side: Some(side),
+            entry_price_cents: Some(45),
+            edge: Some(edge),
+            recorded_at: "now".into(),
+            actual_strikeouts: None,
+            result_yes: None,
+            profit_cents: None,
+            voided: false,
+            model_expected_strikeouts: Some(6.0),
+            model_sd_strikeouts: Some(2.0),
+            model_artifact_id: "m".into(),
+        };
+
+        // NO at 4+ cannot win alongside YES at 7+; the thinner edge is dropped.
+        let mut clashing = vec![
+            entry(4, Side::No, 0.052),
+            entry(7, Side::Yes, 0.090),
+            entry(8, Side::Yes, 0.056),
+        ];
+        super::reconcile_start_positions(&mut clashing);
+        assert_eq!(clashing[0].side, None, "the 5.2pp NO should be demoted");
+        assert_eq!(clashing[0].entry_price_cents, None);
+        assert_eq!(clashing[0].edge, None);
+        assert_eq!(clashing[1].side, Some(Side::Yes), "the 9.0pp YES survives");
+        assert_eq!(clashing[2].side, Some(Side::Yes));
+
+        // YES low with NO high is a coherent range bet — both legs can win.
+        let mut coherent = vec![entry(4, Side::Yes, 0.06), entry(7, Side::No, 0.06)];
+        super::reconcile_start_positions(&mut coherent);
+        assert_eq!(coherent[0].side, Some(Side::Yes));
+        assert_eq!(coherent[1].side, Some(Side::No));
+
+        // Different pitchers never conflict with each other.
+        let mut separate = vec![entry(4, Side::No, 0.05), entry(7, Side::Yes, 0.09)];
+        separate[1].pitcher_id = 2;
+        super::reconcile_start_positions(&mut separate);
+        assert_eq!(separate[0].side, Some(Side::No));
+        assert_eq!(separate[1].side, Some(Side::Yes));
+    }
+
+    #[test]
     fn normalizes_names_with_diacritics_and_punctuation() {
         assert_eq!(
             super::normalize_name("Cristopher Sánchez"),
@@ -492,6 +635,8 @@ mod tests {
             result_yes: None,
             profit_cents: None,
             voided: false,
+            model_expected_strikeouts: Some(6.0),
+            model_sd_strikeouts: Some(2.0),
             model_artifact_id: "m".into(),
         };
         super::apply_result(&mut entry, 7.0);
@@ -600,6 +745,8 @@ mod tests {
                 result_yes: None,
                 profit_cents: None,
                 voided: false,
+                model_expected_strikeouts: Some(6.0),
+                model_sd_strikeouts: Some(2.0),
                 model_artifact_id: "test-artifact".into(),
             },
             super::PaperEntry {
@@ -619,6 +766,8 @@ mod tests {
                 result_yes: None,
                 profit_cents: None,
                 voided: false,
+                model_expected_strikeouts: Some(6.0),
+                model_sd_strikeouts: Some(2.0),
                 model_artifact_id: "test-artifact".into(),
             },
         ];

@@ -229,6 +229,41 @@ body {
 .validation-table b,
 .live-table b { color: var(--muted); }
 
+.reality-check {
+  border-color: var(--rule);
+  border-radius: 3px;
+  color: var(--ink);
+  background: var(--paper-raised);
+}
+.reality-headline {
+  border-color: var(--rule);
+  background: var(--paper-muted);
+}
+.reality-headline span { color: var(--muted); }
+.reality-headline small { color: var(--ink-soft); }
+.reality-headline strong { color: var(--grass); }
+.reality-headline.reality-inconclusive strong { color: var(--ink); }
+.reality-headline.reality-bad strong { color: var(--clay); }
+.reality-grid,
+.reality-grid > div + div { border-color: var(--rule); }
+.reality-grid span,
+.reality-grid small { color: var(--muted); }
+.reality-grid strong { color: var(--ink); }
+.reality-note { color: var(--ink-soft); }
+.reality-note b { color: var(--ink); }
+.reality-warn,
+.reality-warn b { color: var(--clay-dark); }
+.reality-quiet { color: var(--muted); }
+.ladder-table strong { color: var(--grass); }
+/* These two carry the densest numbers on the page, so they get a step up from
+   the 10px the other tables share. */
+.ladder-table span,
+.ladder-table b,
+.ladder-table strong,
+.date-table span,
+.date-table b,
+.date-table strong { padding: 11px 12px; font-size: 11.5px; }
+
 .slate-tools input,
 .slate-tools select {
   border-color: var(--rule);

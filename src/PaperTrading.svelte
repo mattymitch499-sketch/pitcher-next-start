@@ -24,7 +24,8 @@
 
   {#if log}
     <section class="validation-overview">
-      <div><span>Paper P&amp;L</span><strong>{dollars(log.summary.profit_cents)}</strong><small>{log.summary.roi == null ? 'No graded bets yet' : `${(log.summary.roi * 100).toFixed(1)}% return on ${dollars(log.summary.staked_cents)} staked`}</small></div>
+      <div><span>Paper P&amp;L (net)</span><strong>{dollars(log.summary.net_profit_cents)}</strong><small>{log.summary.net_roi == null ? 'No graded bets yet' : `${(log.summary.net_roi * 100).toFixed(1)}% return on ${dollars(log.summary.staked_cents)} staked`}</small></div>
+      <div><span>Kalshi fees</span><strong>−{dollars(log.summary.fee_cents)}</strong><small>{dollars(log.summary.profit_cents)} gross before fees</small></div>
       <div><span>Record</span><strong>{log.summary.wins}–{log.summary.graded_bets - log.summary.wins}</strong><small>{log.summary.open_positions} open positions</small></div>
       <div><span>Markets logged</span><strong>{log.summary.logged_markets.toLocaleString()}</strong><small>{log.summary.graded_logged.toLocaleString()} settled</small></div>
       <div><span>Calibration</span><strong>{percent(log.summary.mean_model_probability)} vs {percent(log.summary.observed_yes_rate)}</strong><small>Mean model probability vs observed YES rate</small></div>
@@ -116,10 +117,10 @@
   {/if}
 
   <section class="live-results">
-    <div class="panel-title"><div><h2>Daily log</h2><p>Run once a day: records today's markets with model probabilities, opens paper positions where the edge is at least 5 points, and settles finished games. The <b>Sim</b> column is the per-plate-appearance simulator's read on the same market — logged for comparison only, never used to size or place a position, and blank until the opposing lineup is posted.</p></div><button onclick={onupdate} disabled={loading}>{loading ? 'Scoring slate and fetching markets…' : "Log today's slate & grade"}</button></div>
+    <div class="panel-title"><div><h2>Daily log</h2><p>Run once a day: records today's markets with model probabilities, opens paper positions where the edge is at least 5 points, and settles finished games. The <b>Sim</b> column is the per-plate-appearance simulator's read on the same market — logged for comparison only, never used to size or place a position, and blank until the opposing lineup is posted. Row-level P/L is gross; Kalshi's fee is charged per fill and is netted out in the summary above.</p></div><button onclick={onupdate} disabled={loading}>{loading ? 'Scoring slate and fetching markets…' : "Log today's slate & grade"}</button></div>
     {#if log && log.entries.length}
       <div class="live-table paper-table">
-        <div><b>Date</b><b>Pitcher</b><b>Market</b><b>Position</b><b>Model</b><b>Sim</b><b>Bid/Ask</b><b>Result</b><b>P/L</b></div>
+        <div><b>Date</b><b>Pitcher</b><b>Market</b><b>Position</b><b>Model</b><b>Sim</b><b>Bid/Ask</b><b>Result</b><b>P/L gross</b></div>
         {#each recent() as entry}
           <div class:paper-bet={entry.side != null}>
             <span>{entry.event_date}</span>

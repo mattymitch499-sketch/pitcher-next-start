@@ -27,6 +27,52 @@ pub enum Side {
     No,
 }
 
+/// Whether a fill crossed the spread (taker) or rested on the book (maker).
+/// `decide` only ever crosses, so every position opened today is a taker; the
+/// distinction exists so the fee is recorded explicitly rather than assumed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Liquidity {
+    Taker,
+    Maker,
+}
+
+/// Kalshi's published trading-fee coefficients, in dollars per contract before
+/// the price term. Maker is exactly a quarter of taker. Both are inspectable
+/// constants rather than hardcoded literals because Kalshi revises the schedule
+/// and waives maker fees on some markets.
+const TAKER_FEE_RATE: f64 = 0.07;
+const MAKER_FEE_RATE: f64 = 0.0175;
+
+impl Liquidity {
+    fn rate(self) -> f64 {
+        match self {
+            Liquidity::Taker => TAKER_FEE_RATE,
+            Liquidity::Maker => MAKER_FEE_RATE,
+        }
+    }
+}
+
+/// The published fee before rounding, in cents: `rate x C x P x (1-P)`, where
+/// `P` is the price in dollars and `C` the contract count (always 1 here).
+/// Split out from [`kalshi_fee_cents`] so the schedule's own worked examples —
+/// 1.75c at 50c taker, 1.12c at 20c taker — stay directly testable.
+fn fee_cents_exact(entry_price_cents: u16, liquidity: Liquidity) -> f64 {
+    let price = f64::from(entry_price_cents) / 100.0;
+    liquidity.rate() * price * (1.0 - price) * 100.0
+}
+
+/// Fee owed on a one-contract fill, in whole cents.
+///
+/// Kalshi rounds the fee **up to the next cent on the order**, not per contract
+/// and not to nearest — so a single contract at 50c costs 2c, not 1.75c. Every
+/// paper position here is one contract, which makes per-order and per-contract
+/// rounding identical; a future sized strategy must round the order total once
+/// instead of summing rounded per-contract fees.
+pub fn kalshi_fee_cents(entry_price_cents: u16, liquidity: Liquidity) -> i32 {
+    fee_cents_exact(entry_price_cents, liquidity).ceil() as i32
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PaperEntry {
     pub market_ticker: String,
@@ -70,6 +116,42 @@ pub struct PaperEntry {
     pub sim_probability: Option<f64>,
     #[serde(default)]
     pub sim_expected_strikeouts: Option<f64>,
+    /// Kalshi's fee on this fill, in whole cents, set when the position graded.
+    /// `profit_cents` stays **gross** of this — see [`PaperEntry::net_profit_cents`].
+    /// Rows written before fees were accounted read back as `None` and are
+    /// restated at the taker rate rather than counted as free.
+    #[serde(default)]
+    pub fee_cents: Option<i32>,
+    /// How the fill was obtained. `None` on pre-fee rows, which were all takers.
+    #[serde(default)]
+    pub liquidity: Option<Liquidity>,
+}
+
+impl PaperEntry {
+    /// The fee this position owes, restating pre-fee rows at the taker rate.
+    ///
+    /// Recomputing rather than defaulting to zero matters: the log predates fee
+    /// accounting entirely, so treating a missing value as "no fee" would keep
+    /// the historical record flattering by exactly the amount being fixed.
+    pub fn effective_fee_cents(&self) -> i32 {
+        match (self.fee_cents, self.entry_price_cents) {
+            (Some(fee), _) => fee,
+            (None, Some(price)) => {
+                kalshi_fee_cents(price, self.liquidity.unwrap_or(Liquidity::Taker))
+            }
+            (None, None) => 0,
+        }
+    }
+
+    /// Profit after fees. `None` when the position has not graded.
+    ///
+    /// `profit_cents` deliberately remains the gross figure it has always been:
+    /// redefining a column that eight dates of CSV already populate would make
+    /// old and new rows indistinguishable, so net is derived instead of stored.
+    pub fn net_profit_cents(&self) -> Option<i32> {
+        self.profit_cents
+            .map(|gross| gross - self.effective_fee_cents())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,8 +161,16 @@ pub struct PaperSummary {
     pub graded_bets: usize,
     pub wins: usize,
     pub staked_cents: u64,
+    /// Profit **before** Kalshi's fees. Kept under its original name so existing
+    /// readers keep their meaning; `net_profit_cents` is the figure that matches
+    /// what an account would actually show.
     pub profit_cents: i64,
     pub roi: Option<f64>,
+    /// Fees owed across every graded position, restating pre-fee rows at the
+    /// taker rate.
+    pub fee_cents: i64,
+    pub net_profit_cents: i64,
+    pub net_roi: Option<f64>,
     pub graded_logged: usize,
     pub mean_model_probability: Option<f64>,
     pub observed_yes_rate: Option<f64>,
@@ -272,6 +362,10 @@ pub(crate) fn match_markets(
             model_artifact_id: model.artifact_id.clone(),
             sim_probability: sim_pmf.and_then(|pmf| pmf_over_probability(pmf, threshold)),
             sim_expected_strikeouts: sim_pmf.and_then(pmf_moments).map(|(mean, _)| mean),
+            // Fee is charged on the fill, so it is stamped at grade time along
+            // with the profit; `decide` only ever crosses the spread.
+            fee_cents: None,
+            liquidity: position.is_some().then_some(Liquidity::Taker),
         });
     }
     reconcile_start_positions(&mut entries);
@@ -337,6 +431,10 @@ pub(crate) fn apply_result(entry: &mut PaperEntry, actual_strikeouts: f64) {
         } else {
             -(price as i32)
         });
+        entry.fee_cents = Some(kalshi_fee_cents(
+            price,
+            entry.liquidity.unwrap_or(Liquidity::Taker),
+        ));
     }
 }
 
@@ -366,6 +464,11 @@ pub fn summarize(entries: &[PaperEntry]) -> PaperSummary {
         .filter_map(|entry| entry.profit_cents)
         .map(i64::from)
         .sum();
+    let fee_cents: i64 = graded_bets
+        .iter()
+        .map(|entry| i64::from(entry.effective_fee_cents()))
+        .sum();
+    let net_profit_cents = profit_cents - fee_cents;
     PaperSummary {
         logged_markets: active.len(),
         open_positions: bets.len() - graded_bets.len(),
@@ -377,6 +480,9 @@ pub fn summarize(entries: &[PaperEntry]) -> PaperSummary {
         staked_cents,
         profit_cents,
         roi: (staked_cents > 0).then(|| profit_cents as f64 / staked_cents as f64),
+        fee_cents,
+        net_profit_cents,
+        net_roi: (staked_cents > 0).then(|| net_profit_cents as f64 / staked_cents as f64),
         graded_logged: graded_logged.len(),
         mean_model_probability: (!graded_logged.is_empty()).then(|| {
             graded_logged
@@ -625,6 +731,105 @@ mod tests {
         assert_eq!(rows[0].sim_expected_strikeouts, None);
     }
 
+    /// Kalshi's published schedule: `round_up_to_cent(rate x C x P x (1-P))`,
+    /// rate 0.07 taker and 0.0175 maker.
+    #[test]
+    fn kalshi_fee_matches_the_published_schedule() {
+        use super::Liquidity::{Maker, Taker};
+
+        // The schedule's own worked examples, before rounding.
+        assert!((super::fee_cents_exact(50, Taker) - 1.75).abs() < 1e-12);
+        assert!((super::fee_cents_exact(20, Taker) - 1.12).abs() < 1e-12);
+        // Maker is exactly a quarter of taker at every price.
+        for price in [5, 20, 45, 50, 83] {
+            let quarter = super::fee_cents_exact(price, Taker) / 4.0;
+            assert!((super::fee_cents_exact(price, Maker) - quarter).abs() < 1e-12);
+        }
+
+        // Rounding is UP to the whole cent, so a single contract at 50c owes 2c
+        // and not 1.75c. This is the correction that makes the ledger honest.
+        assert_eq!(super::kalshi_fee_cents(50, Taker), 2);
+        assert_eq!(super::kalshi_fee_cents(20, Taker), 2);
+        assert_eq!(super::kalshi_fee_cents(45, Taker), 2);
+        assert_eq!(super::kalshi_fee_cents(50, Maker), 1);
+
+        // Any real fill owes at least a cent; only a degenerate price is free.
+        assert_eq!(super::kalshi_fee_cents(1, Taker), 1);
+        assert_eq!(super::kalshi_fee_cents(0, Taker), 0);
+        assert_eq!(super::kalshi_fee_cents(100, Taker), 0);
+    }
+
+    /// Rows logged before fees were tracked must restate at the taker rate
+    /// rather than counting as free — otherwise the historical record stays
+    /// flattering by exactly the amount this change exists to fix.
+    #[test]
+    fn pre_fee_csv_rows_restate_at_the_taker_rate() {
+        let old = "market_ticker,event_date,pitcher_id,pitcher_name,threshold,model_probability,\
+                   yes_bid,yes_ask,side,entry_price_cents,edge,recorded_at,actual_strikeouts,\
+                   result_yes,profit_cents,voided,model_expected_strikeouts,model_sd_strikeouts,\
+                   model_artifact_id\n\
+                   T-6,2026-07-20,1,Test,6,0.55,40,45,yes,45,0.10,now,7.0,true,55,false,6.0,2.0,m\n";
+        let rows: Vec<super::PaperEntry> = csv::Reader::from_reader(old.as_bytes())
+            .deserialize()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+
+        let row = &rows[0];
+        assert_eq!(row.fee_cents, None, "the column did not exist yet");
+        assert_eq!(row.liquidity, None);
+        // ceil(7 * 0.45 * 0.55) = ceil(1.7325) = 2
+        assert_eq!(row.effective_fee_cents(), 2);
+        // Gross is untouched; net is derived.
+        assert_eq!(row.profit_cents, Some(55));
+        assert_eq!(row.net_profit_cents(), Some(53));
+    }
+
+    /// Gross, fees and net are reported separately — burying the difference in
+    /// one number is what made the log overstate performance in the first place.
+    #[test]
+    fn summarize_separates_gross_fees_and_net() {
+        let cards = crate::score_date_fixture("2026-07-21").unwrap();
+        let model = crate::ModelInfo {
+            artifact_id: "test-artifact".into(),
+            schema_version: 2,
+            trained_through: chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap(),
+            training_rows: 100,
+        };
+        let markets = vec![market(
+            "KXMLBKS-26JUL211910AAABBB-AAAFACE1-6",
+            "Fixture Ace: 6+",
+            Some(40),
+            Some(45),
+        )];
+        let mut entries = super::match_markets(&cards, &markets, &model, "now", 0.05);
+        for entry in &mut entries {
+            super::apply_result(entry, 7.0);
+        }
+
+        let summary = super::summarize(&entries);
+        let expected_fees: i64 = entries
+            .iter()
+            .filter(|entry| entry.profit_cents.is_some())
+            .map(|entry| i64::from(entry.effective_fee_cents()))
+            .sum();
+
+        assert_eq!(summary.fee_cents, expected_fees);
+        assert_eq!(
+            summary.net_profit_cents,
+            summary.profit_cents - summary.fee_cents,
+        );
+        assert!(summary.fee_cents > 0, "a graded position always owes a fee");
+        assert!(
+            summary.net_profit_cents < summary.profit_cents,
+            "net must be strictly worse than gross once a fee is charged"
+        );
+        // Grading stamps the fee onto the row so it is not recomputed forever.
+        for entry in entries.iter().filter(|entry| entry.side.is_some()) {
+            assert!(entry.fee_cents.is_some());
+            assert_eq!(entry.liquidity, Some(super::Liquidity::Taker));
+        }
+    }
+
     #[test]
     fn drops_the_weaker_leg_of_a_mutually_exclusive_pair() {
         let entry = |threshold: u16, side: super::Side, edge: f64| super::PaperEntry {
@@ -649,6 +854,8 @@ mod tests {
             model_artifact_id: "m".into(),
             sim_probability: None,
             sim_expected_strikeouts: None,
+            fee_cents: None,
+            liquidity: None,
         };
 
         // NO at 4+ cannot win alongside YES at 7+; the thinner edge is dropped.
@@ -727,6 +934,8 @@ mod tests {
             model_artifact_id: "m".into(),
             sim_probability: None,
             sim_expected_strikeouts: None,
+            fee_cents: None,
+            liquidity: None,
         };
         super::apply_result(&mut entry, 7.0);
         assert_eq!(entry.result_yes, Some(true));
@@ -839,6 +1048,8 @@ mod tests {
                 model_artifact_id: "test-artifact".into(),
                 sim_probability: Some(0.61),
                 sim_expected_strikeouts: Some(6.4),
+                fee_cents: None,
+                liquidity: Some(super::Liquidity::Taker),
             },
             super::PaperEntry {
                 market_ticker: open_ticker.into(),
@@ -862,6 +1073,8 @@ mod tests {
                 model_artifact_id: "test-artifact".into(),
                 sim_probability: None,
                 sim_expected_strikeouts: None,
+                fee_cents: None,
+                liquidity: None,
             },
         ];
         super::write_log(&super::log_path(&root), &seed).unwrap();

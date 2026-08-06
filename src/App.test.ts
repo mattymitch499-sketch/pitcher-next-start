@@ -61,7 +61,8 @@ const clustering = (): ClusterStats => ({
 
 const paperLog = (): PaperLog => ({
   entries:[paperEntry('Traded Ace','yes'),paperEntry('Untraded Arm',null)],
-  summary:{logged_markets:2,open_positions:0,graded_bets:1,wins:1,staked_cents:45,profit_cents:55,roi:1.2,graded_logged:2,mean_model_probability:.55,observed_yes_rate:.5,last_recorded_at:'2026-07-28T12:00:00Z'},
+  // 45c fill: ceil(7 * .45 * .55) = 2c taker fee, so net is 55 - 2 = 53.
+  summary:{logged_markets:2,open_positions:0,graded_bets:1,wins:1,staked_cents:45,profit_cents:55,roi:1.2,fee_cents:2,net_profit_cents:53,net_roi:1.178,graded_logged:2,mean_model_probability:.55,observed_yes_rate:.5,last_recorded_at:'2026-07-28T12:00:00Z'},
   clustering:clustering()
 });
 

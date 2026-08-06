@@ -1017,6 +1017,8 @@ mod tests {
             model_artifact_id: "m".into(),
             sim_probability: None,
             sim_expected_strikeouts: None,
+            fee_cents: None,
+            liquidity: None,
         }
     }
 

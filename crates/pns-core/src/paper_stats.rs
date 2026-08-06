@@ -17,16 +17,16 @@ use std::collections::BTreeMap;
 
 /// Bootstrap resamples. Cheap enough (microseconds per draw at this scale) that
 /// the Monte-Carlo jitter falls below the precision the UI prints.
-const BOOTSTRAP_DRAWS: usize = 10_000;
+pub(crate) const BOOTSTRAP_DRAWS: usize = 10_000;
 /// Below this many distinct starts a cluster bootstrap is not trustworthy, so
 /// intervals are suppressed rather than shown at fake precision.
-const MIN_CLUSTERS_FOR_INTERVAL: usize = 25;
+pub(crate) const MIN_CLUSTERS_FOR_INTERVAL: usize = 25;
 /// Fixed-width calibration bins. Deliberately not deciles: empirical deciles
 /// reshuffle as data arrives, so the curve would not be comparable run to run.
 const CALIBRATION_BINS: usize = 10;
 /// Fixed seed so identical data always yields an identical interval — the
 /// number must not jitter when the user simply reopens the tab.
-const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
+pub(crate) const SEED: u64 = 0x9E37_79B9_7F4A_7C15;
 
 /// A point estimate with an optional 95% interval. `low`/`high` are `None` when
 /// there were too few starts to say anything honest.
@@ -344,10 +344,10 @@ fn mean_start_pnl(clusters: &[&Cluster]) -> Option<f64> {
 // Deterministic PRNG (xorshift64*)
 // ---------------------------------------------------------------------------
 
-struct Rng(u64);
+pub(crate) struct Rng(u64);
 
 impl Rng {
-    fn new(seed: u64) -> Self {
+    pub(crate) fn new(seed: u64) -> Self {
         // A zero state is a fixed point for xorshift and would emit only zeros.
         Self(if seed == 0 { 1 } else { seed })
     }
@@ -363,7 +363,7 @@ impl Rng {
 
     /// Uniform index below `n`. The modulo bias is on the order of `n / 2^64`,
     /// which is unmeasurable for the cluster counts here.
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next_u64() % n as u64) as usize
     }
 }
@@ -519,14 +519,18 @@ fn bootstrap(clusters: &[Cluster], thresholds: &[u16]) -> Replicates {
 /// BCa interval. Percentile intervals inherit the O(1/M) bias these ratio
 /// estimators carry; BCa corrects for that bias and for skew, using a
 /// leave-one-cluster-out jackknife for the acceleration term.
-fn bca_interval<F>(
+///
+/// Generic in the cluster type so any correlated-observation problem in the
+/// crate — paper-trading legs grouped by start, backtest ladder rungs grouped
+/// by start — gets the same interval rather than a second implementation.
+pub(crate) fn bca_interval<C, F>(
     point: f64,
     replicates: &[f64],
-    clusters: &[Cluster],
+    clusters: &[C],
     statistic: F,
 ) -> Option<Interval>
 where
-    F: Fn(&[&Cluster]) -> Option<f64>,
+    F: Fn(&[&C]) -> Option<f64>,
 {
     if clusters.len() < MIN_CLUSTERS_FOR_INTERVAL || replicates.len() < BOOTSTRAP_DRAWS / 2 {
         return Some(Interval {
@@ -546,7 +550,7 @@ where
     // Acceleration from the cluster jackknife.
     let mut jackknife = Vec::with_capacity(clusters.len());
     for skip in 0..clusters.len() {
-        let subset: Vec<&Cluster> = clusters
+        let subset: Vec<&C> = clusters
             .iter()
             .enumerate()
             .filter(|(index, _)| *index != skip)
@@ -645,24 +649,37 @@ fn icc_design_effect(clusters: &[Cluster]) -> Option<f64> {
 /// Brier, log score and ECE over every graded leg. Unlike the calibration gap
 /// these do not cancel when the model is high in one region and low in another.
 fn scores(clusters: &[Cluster]) -> (Option<f64>, Option<f64>, Option<f64>) {
-    let legs: Vec<GradedLeg> = clusters
+    let legs: Vec<(f64, bool)> = clusters
         .iter()
-        .flat_map(|cluster| cluster.graded.iter().copied())
+        .flat_map(|cluster| {
+            cluster
+                .graded
+                .iter()
+                .map(|leg| (leg.model_probability, leg.result_yes))
+        })
         .collect();
+    probability_scores(&legs)
+}
+
+/// The same three proper scores over any `(forecast probability, outcome)`
+/// pairs, so a second forecaster — a market quote, a simulated ladder — is
+/// graded by exactly the machinery the model is graded by. ECE uses
+/// [`CALIBRATION_BINS`] fixed-width bins.
+pub(crate) fn probability_scores(legs: &[(f64, bool)]) -> (Option<f64>, Option<f64>, Option<f64>) {
     if legs.is_empty() {
         return (None, None, None);
     }
     let count = legs.len() as f64;
     let brier = legs
         .iter()
-        .map(|leg| (leg.model_probability - f64::from(u8::from(leg.result_yes))).powi(2))
+        .map(|(probability, outcome)| (probability - f64::from(u8::from(*outcome))).powi(2))
         .sum::<f64>()
         / count;
     let log_score = -legs
         .iter()
-        .map(|leg| {
-            let clamped = leg.model_probability.clamp(1e-6, 1.0 - 1e-6);
-            if leg.result_yes {
+        .map(|(probability, outcome)| {
+            let clamped = probability.clamp(1e-6, 1.0 - 1e-6);
+            if *outcome {
                 clamped.ln()
             } else {
                 (1.0 - clamped).ln()
@@ -674,11 +691,10 @@ fn scores(clusters: &[Cluster]) -> (Option<f64>, Option<f64>, Option<f64>) {
     let mut bin_total = [0.0; CALIBRATION_BINS];
     let mut bin_hits = [0.0; CALIBRATION_BINS];
     let mut bin_count = [0usize; CALIBRATION_BINS];
-    for leg in &legs {
-        let index =
-            ((leg.model_probability * CALIBRATION_BINS as f64) as usize).min(CALIBRATION_BINS - 1);
-        bin_total[index] += leg.model_probability;
-        bin_hits[index] += f64::from(u8::from(leg.result_yes));
+    for (probability, outcome) in legs {
+        let index = ((probability * CALIBRATION_BINS as f64) as usize).min(CALIBRATION_BINS - 1);
+        bin_total[index] += probability;
+        bin_hits[index] += f64::from(u8::from(*outcome));
         bin_count[index] += 1;
     }
     let ece = (0..CALIBRATION_BINS)
@@ -999,6 +1015,8 @@ mod tests {
             model_expected_strikeouts: Some(6.0),
             model_sd_strikeouts: Some(2.0),
             model_artifact_id: "m".into(),
+            sim_probability: None,
+            sim_expected_strikeouts: None,
         }
     }
 

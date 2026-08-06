@@ -116,10 +116,10 @@
   {/if}
 
   <section class="live-results">
-    <div class="panel-title"><div><h2>Daily log</h2><p>Run once a day: records today's markets with model probabilities, opens paper positions where the edge is at least 5 points, and settles finished games.</p></div><button onclick={onupdate} disabled={loading}>{loading ? 'Scoring slate and fetching markets…' : "Log today's slate & grade"}</button></div>
+    <div class="panel-title"><div><h2>Daily log</h2><p>Run once a day: records today's markets with model probabilities, opens paper positions where the edge is at least 5 points, and settles finished games. The <b>Sim</b> column is the per-plate-appearance simulator's read on the same market — logged for comparison only, never used to size or place a position, and blank until the opposing lineup is posted.</p></div><button onclick={onupdate} disabled={loading}>{loading ? 'Scoring slate and fetching markets…' : "Log today's slate & grade"}</button></div>
     {#if log && log.entries.length}
       <div class="live-table paper-table">
-        <div><b>Date</b><b>Pitcher</b><b>Market</b><b>Position</b><b>Model</b><b>Bid/Ask</b><b>Result</b><b>P/L</b></div>
+        <div><b>Date</b><b>Pitcher</b><b>Market</b><b>Position</b><b>Model</b><b>Sim</b><b>Bid/Ask</b><b>Result</b><b>P/L</b></div>
         {#each recent() as entry}
           <div class:paper-bet={entry.side != null}>
             <span>{entry.event_date}</span>
@@ -127,6 +127,7 @@
             <span>{entry.threshold}+ Ks</span>
             <span>{sideLabel(entry)}</span>
             <span>{percent(entry.model_probability)}</span>
+            <span>{entry.sim_probability == null ? '—' : percent(entry.sim_probability)}</span>
             <span>{entry.yes_bid ?? '—'}/{entry.yes_ask ?? '—'}</span>
             <span>{resultLabel(entry)}</span>
             <span>{profitLabel(entry)}</span>

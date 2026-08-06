@@ -31,6 +31,32 @@ pub struct PitcherStartLog {
     pub historical_opponent_offense: Option<f64>,
     #[serde(default)]
     pub pitch_hand: Option<char>,
+    /// The opposing side's starting nine, in lineup-slot order. Empty means the
+    /// lineup was never backfilled (every pre-v3 dataset row) rather than "this
+    /// team sent nobody up", so a consumer must treat empty as unknown.
+    #[serde(default, with = "batter_ids")]
+    pub opponent_batters: Vec<u32>,
+}
+
+/// A CSV field holds one value, so the starting nine ride in a single
+/// `|`-separated column instead of nine columns. A dataset written before the
+/// column existed simply has no header for it, and `serde(default)` fills an
+/// empty lineup — which is what keeps the frozen v2 training CSV readable.
+mod batter_ids {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(ids: &[u32], serializer: S) -> Result<S::Ok, S::Error> {
+        let joined = ids.iter().map(u32::to_string).collect::<Vec<_>>().join("|");
+        serializer.serialize_str(&joined)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Vec<u32>, D::Error> {
+        String::deserialize(deserializer)?
+            .split('|')
+            .filter(|id| !id.is_empty())
+            .map(|id| id.parse().map_err(serde::de::Error::custom))
+            .collect()
+    }
 }
 
 impl PitcherStartLog {

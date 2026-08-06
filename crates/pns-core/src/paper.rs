@@ -61,6 +61,15 @@ pub struct PaperEntry {
     #[serde(default)]
     pub model_sd_strikeouts: Option<f64>,
     pub model_artifact_id: String,
+    /// The per-PA simulator's read on the same market, recorded at the same
+    /// moment as `model_probability` (whole-row refresh keeps the pair
+    /// contemporaneous until the row locks). Log-only: never consulted by
+    /// `decide`. `None` when the opposing lineup was not posted at the last
+    /// unlocked refresh. Rows written before this field read back as `None`.
+    #[serde(default)]
+    pub sim_probability: Option<f64>,
+    #[serde(default)]
+    pub sim_expected_strikeouts: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,7 +114,11 @@ pub fn read_log(root: impl AsRef<Path>) -> Result<Vec<PaperEntry>> {
 
 /// Lowercased, diacritic-folded, alphanumeric-and-space form used to match
 /// Kalshi market subtitles against MLB pitcher names.
-fn normalize_name(name: &str) -> String {
+///
+/// Public so the historical market benchmark joins pitchers to markets with
+/// exactly the rule the live path uses — a second implementation would let the
+/// backtest and production disagree about who a market refers to.
+pub fn normalize_name(name: &str) -> String {
     let mut normalized = String::with_capacity(name.len());
     for character in name.chars().flat_map(char::to_lowercase) {
         let folded = match character {
@@ -127,14 +140,13 @@ fn normalize_name(name: &str) -> String {
     normalized.trim().to_string()
 }
 
-/// P(strikeouts >= threshold) from a card's discrete distribution.
-fn model_over_probability(card: &DecisionCard, threshold: u16) -> Option<f64> {
-    if card.strikeout_probabilities.is_empty() {
+/// P(strikeouts >= threshold) from a PMF where index `k` holds P(exactly k).
+fn pmf_over_probability(pmf: &[f64], threshold: u16) -> Option<f64> {
+    if pmf.is_empty() {
         return None;
     }
     Some(
-        card.strikeout_probabilities
-            .iter()
+        pmf.iter()
             .enumerate()
             .filter(|(k, _)| *k >= threshold as usize)
             .map(|(_, probability)| probability)
@@ -142,25 +154,32 @@ fn model_over_probability(card: &DecisionCard, threshold: u16) -> Option<f64> {
     )
 }
 
-/// Mean and standard deviation of a card's discrete strikeout distribution.
-/// `strikeout_probabilities` is a PMF: index `k` holds P(exactly k strikeouts).
-fn model_moments(card: &DecisionCard) -> Option<(f64, f64)> {
-    if card.strikeout_probabilities.is_empty() {
+/// P(strikeouts >= threshold) from a card's discrete distribution.
+fn model_over_probability(card: &DecisionCard, threshold: u16) -> Option<f64> {
+    pmf_over_probability(&card.strikeout_probabilities, threshold)
+}
+
+/// Mean and standard deviation of a strikeout PMF.
+fn pmf_moments(pmf: &[f64]) -> Option<(f64, f64)> {
+    if pmf.is_empty() {
         return None;
     }
-    let mean: f64 = card
-        .strikeout_probabilities
+    let mean: f64 = pmf
         .iter()
         .enumerate()
         .map(|(k, probability)| k as f64 * probability)
         .sum();
-    let variance: f64 = card
-        .strikeout_probabilities
+    let variance: f64 = pmf
         .iter()
         .enumerate()
         .map(|(k, probability)| (k as f64 - mean).powi(2) * probability)
         .sum();
     Some((mean, variance.max(0.0).sqrt()))
+}
+
+/// Mean and standard deviation of a card's discrete strikeout distribution.
+fn model_moments(card: &DecisionCard) -> Option<(f64, f64)> {
+    pmf_moments(&card.strikeout_probabilities)
 }
 
 /// Chooses a paper position when a live two-sided quote disagrees with the
@@ -230,6 +249,7 @@ pub(crate) fn match_markets(
             edge_threshold,
         );
         let moments = model_moments(card);
+        let sim_pmf = card.sim_strikeout_probabilities.as_deref();
         entries.push(PaperEntry {
             market_ticker: market.ticker.clone(),
             event_date: event_date.to_string(),
@@ -250,6 +270,8 @@ pub(crate) fn match_markets(
             model_expected_strikeouts: moments.map(|(mean, _)| mean),
             model_sd_strikeouts: moments.map(|(_, sd)| sd),
             model_artifact_id: model.artifact_id.clone(),
+            sim_probability: sim_pmf.and_then(|pmf| pmf_over_probability(pmf, threshold)),
+            sim_expected_strikeouts: sim_pmf.and_then(pmf_moments).map(|(mean, _)| mean),
         });
     }
     reconcile_start_positions(&mut entries);
@@ -517,6 +539,8 @@ mod tests {
             yes_bid: bid,
             yes_ask: ask,
             status: "active".into(),
+            result: None,
+            close_time: None,
         }
     }
 
@@ -538,6 +562,67 @@ mod tests {
         closed.status = "closed".into();
         let entries = super::match_markets(&cards, &[closed], &model, "now", 0.05);
         assert!(entries.is_empty());
+    }
+
+    /// The simulator is log-only: a card with a sim PMF must produce byte-for-byte
+    /// the same position (side, entry price, edge) as the same card without one,
+    /// while the sim columns record the PMF's tail probability and mean.
+    #[test]
+    fn sim_forecast_is_logged_but_never_traded() {
+        let mut cards = crate::score_date_fixture("2026-07-21").unwrap();
+        let model = crate::ModelInfo {
+            artifact_id: "test-artifact".into(),
+            schema_version: 2,
+            trained_through: chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap(),
+            training_rows: 100,
+        };
+        let markets = vec![market(
+            "KXMLBKS-26JUL211910AAABBB-AAAFACE1-6",
+            "Fixture Ace: 6+",
+            Some(40),
+            Some(45),
+        )];
+
+        let without = super::match_markets(&cards, &markets, &model, "now", 0.05);
+        // A PMF putting 70% at exactly 6 K and 30% at exactly 2 K.
+        let mut pmf = vec![0.0; 13];
+        pmf[2] = 0.3;
+        pmf[6] = 0.7;
+        for card in &mut cards {
+            card.sim_strikeout_probabilities = Some(pmf.clone());
+        }
+        let with = super::match_markets(&cards, &markets, &model, "now", 0.05);
+
+        assert_eq!(without.len(), 1);
+        assert_eq!(with.len(), 1);
+        assert_eq!(without[0].side, with[0].side, "sim must not change the side");
+        assert_eq!(without[0].entry_price_cents, with[0].entry_price_cents);
+        assert_eq!(without[0].edge, with[0].edge);
+        assert_eq!(without[0].model_probability, with[0].model_probability);
+
+        assert_eq!(without[0].sim_probability, None);
+        let sim_probability = with[0].sim_probability.unwrap();
+        assert!((sim_probability - 0.7).abs() < 1e-12, "P(K >= 6) of the PMF");
+        let sim_mean = with[0].sim_expected_strikeouts.unwrap();
+        assert!((sim_mean - (0.3 * 2.0 + 0.7 * 6.0)).abs() < 1e-12);
+    }
+
+    /// paper_trades.csv written before the sim columns existed must keep reading.
+    #[test]
+    fn pre_sim_csv_rows_read_back_with_empty_sim_columns() {
+        let old = "market_ticker,event_date,pitcher_id,pitcher_name,threshold,model_probability,\
+                   yes_bid,yes_ask,side,entry_price_cents,edge,recorded_at,actual_strikeouts,\
+                   result_yes,profit_cents,voided,model_expected_strikeouts,model_sd_strikeouts,\
+                   model_artifact_id\n\
+                   T-6,2026-07-20,1,Test,6,0.55,40,45,yes,45,0.10,now,7.0,true,55,false,6.0,2.0,m\n";
+        let rows: Vec<super::PaperEntry> = csv::Reader::from_reader(old.as_bytes())
+            .deserialize()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].profit_cents, Some(55));
+        assert_eq!(rows[0].sim_probability, None);
+        assert_eq!(rows[0].sim_expected_strikeouts, None);
     }
 
     #[test]
@@ -562,6 +647,8 @@ mod tests {
             model_expected_strikeouts: Some(6.0),
             model_sd_strikeouts: Some(2.0),
             model_artifact_id: "m".into(),
+            sim_probability: None,
+            sim_expected_strikeouts: None,
         };
 
         // NO at 4+ cannot win alongside YES at 7+; the thinner edge is dropped.
@@ -638,6 +725,8 @@ mod tests {
             model_expected_strikeouts: Some(6.0),
             model_sd_strikeouts: Some(2.0),
             model_artifact_id: "m".into(),
+            sim_probability: None,
+            sim_expected_strikeouts: None,
         };
         super::apply_result(&mut entry, 7.0);
         assert_eq!(entry.result_yes, Some(true));
@@ -748,6 +837,8 @@ mod tests {
                 model_expected_strikeouts: Some(6.0),
                 model_sd_strikeouts: Some(2.0),
                 model_artifact_id: "test-artifact".into(),
+                sim_probability: Some(0.61),
+                sim_expected_strikeouts: Some(6.4),
             },
             super::PaperEntry {
                 market_ticker: open_ticker.into(),
@@ -769,6 +860,8 @@ mod tests {
                 model_expected_strikeouts: Some(6.0),
                 model_sd_strikeouts: Some(2.0),
                 model_artifact_id: "test-artifact".into(),
+                sim_probability: None,
+                sim_expected_strikeouts: None,
             },
         ];
         super::write_log(&super::log_path(&root), &seed).unwrap();
@@ -787,6 +880,11 @@ mod tests {
         assert_eq!(placed.recorded_at, "frozen");
         assert_eq!(placed.yes_bid, Some(40));
         assert_eq!(placed.entry_price_cents, Some(45));
+        // The sim probability freezes with the rest of the row, so the logged
+        // pair stays the model and sim reads taken at the same moment rather
+        // than a frozen model probability beside a fresh sim one.
+        assert_eq!(placed.sim_probability, Some(0.61));
+        assert_eq!(placed.sim_expected_strikeouts, Some(6.4));
 
         let refreshed = entries
             .iter()

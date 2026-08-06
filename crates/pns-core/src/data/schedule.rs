@@ -11,11 +11,15 @@ struct ScheduleResponse {
 #[derive(Deserialize)]
 struct ScheduleDate {
     #[serde(default)]
+    date: Option<String>,
+    #[serde(default)]
     games: Vec<Game>,
 }
 #[derive(Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Game {
+    #[serde(default)]
+    game_pk: u32,
     teams: Teams,
     game_date: Option<String>,
     venue: Option<Venue>,
@@ -141,6 +145,51 @@ pub fn find_reschedule(json: &str, pitcher_id: u32) -> Result<Option<NaiveDate>>
     Ok(None)
 }
 
+/// One game from a date-range schedule fetch, reduced to what the batter-data
+/// top-up and the market benchmark need: which game, which day, when it starts,
+/// and whether it is over.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GameIndexEntry {
+    pub game_pk: u32,
+    pub game_date: NaiveDate,
+    /// MLB's `gameDate` ISO-8601 timestamp (first pitch, UTC), verbatim.
+    pub first_pitch: Option<String>,
+    pub is_final: bool,
+}
+
+/// Every game in a `/schedule?startDate=&endDate=` response. The schedule groups
+/// games under their official date, which is what keeps a suspended game's stats
+/// attributed to the day it began.
+pub fn normalize_game_index(json: &str) -> Result<Vec<GameIndexEntry>> {
+    let response: ScheduleResponse = serde_json::from_str(json)?;
+    let mut entries = Vec::new();
+    for day in response.dates {
+        let Some(date) = day
+            .date
+            .as_deref()
+            .and_then(|date| NaiveDate::parse_from_str(date, "%Y-%m-%d").ok())
+        else {
+            continue;
+        };
+        for game in day.games {
+            if game.game_pk == 0 {
+                continue;
+            }
+            let is_final = game.status.as_ref().is_some_and(|status| {
+                status.detailed_state.starts_with("Final")
+                    || status.detailed_state.starts_with("Completed Early")
+            });
+            entries.push(GameIndexEntry {
+                game_pk: game.game_pk,
+                game_date: date,
+                first_pitch: game.game_date.clone(),
+                is_final,
+            });
+        }
+    }
+    Ok(entries)
+}
+
 pub fn fixture_contexts(date: NaiveDate) -> Result<Vec<NextStartContext>> {
     normalize_schedule(
         include_str!("../../../../data/fixtures/mlb_schedule.json"),
@@ -158,6 +207,32 @@ mod tests {
         assert!(rows.iter().any(|row| row.home && row.pitcher_id == 608331));
         assert!(rows.iter().any(|row| !row.home && row.opponent_id == 147));
         assert!(rows.iter().all(|row| !row.pitcher_team_name.is_empty()));
+    }
+
+    #[test]
+    fn game_index_carries_pk_date_time_and_finality() {
+        let json = r#"{"dates":[{"date":"2026-07-21","games":[
+            {"gamePk":777001,"gameDate":"2026-07-21T23:05:00Z","status":{"detailedState":"Final"},
+             "teams":{"away":{"team":{"id":134,"name":"Pirates"}},"home":{"team":{"id":147,"name":"Yankees"}}}},
+            {"gamePk":777002,"gameDate":"2026-07-22T00:10:00Z","status":{"detailedState":"In Progress"},
+             "teams":{"away":{"team":{"id":112,"name":"Cubs"}},"home":{"team":{"id":138,"name":"Cardinals"}}}}
+        ]}]}"#;
+        let entries = super::normalize_game_index(json).unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].game_pk, 777001);
+        assert_eq!(
+            entries[0].game_date,
+            chrono::NaiveDate::from_ymd_opt(2026, 7, 21).unwrap()
+        );
+        assert_eq!(
+            entries[0].first_pitch.as_deref(),
+            Some("2026-07-21T23:05:00Z")
+        );
+        assert!(entries[0].is_final);
+        assert!(!entries[1].is_final);
+        // The second game's official date is the 21st even though first pitch
+        // lands after midnight UTC.
+        assert_eq!(entries[1].game_date, entries[0].game_date);
     }
 
     #[test]

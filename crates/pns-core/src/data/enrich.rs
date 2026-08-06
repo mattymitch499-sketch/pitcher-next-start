@@ -19,14 +19,99 @@ impl RateStats {
     }
 }
 
+/// Running ER/IP totals behind the historical context fold: league wide, by
+/// (opponent, pitcher hand), and by park. Training enrichment and live as-of
+/// lookups both read their factors from here, so the two cannot drift apart.
+#[derive(Default, Clone)]
+pub(crate) struct ContextAccumulators {
+    league: RateStats,
+    opponents: HashMap<(u32, char), RateStats>,
+    parks: HashMap<u32, RateStats>,
+}
+
+impl ContextAccumulators {
+    fn league_rate(&self) -> f64 {
+        if self.league.innings > 0.0 {
+            self.league.earned_runs / self.league.innings
+        } else {
+            0.48
+        }
+    }
+
+    pub(crate) fn opponent_offense_factor(&self, opponent_id: u32, hand: char) -> f64 {
+        let league_rate = self.league_rate();
+        let opponent_rate = self
+            .opponents
+            .get(&(opponent_id, hand))
+            .copied()
+            .unwrap_or_default()
+            .rate(league_rate, 60.0);
+        (opponent_rate / league_rate).clamp(0.75, 1.30)
+    }
+
+    pub(crate) fn park_factor(&self, home_team_id: u32) -> f64 {
+        let league_rate = self.league_rate();
+        let park_rate = self
+            .parks
+            .get(&home_team_id)
+            .copied()
+            .unwrap_or_default()
+            .rate(league_rate, 120.0);
+        (park_rate / league_rate).clamp(0.85, 1.15)
+    }
+
+    /// Every factor this state can answer, as (opponent, hand) and park lookup
+    /// tables. An id missing from a table resolves to 1.0, which is exactly what
+    /// the accumulator returns for a team or park it holds no innings for.
+    pub(crate) fn factor_tables(&self) -> (HashMap<(u32, char), f64>, HashMap<u32, f64>) {
+        (
+            self.opponents
+                .keys()
+                .map(|&(opponent_id, hand)| {
+                    (
+                        (opponent_id, hand),
+                        self.opponent_offense_factor(opponent_id, hand),
+                    )
+                })
+                .collect(),
+            self.parks
+                .keys()
+                .map(|&home_team_id| (home_team_id, self.park_factor(home_team_id)))
+                .collect(),
+        )
+    }
+
+    fn add(&mut self, row: &PitcherStartLog, hand: char) {
+        let home_team_id = if row.home {
+            row.team_id
+        } else {
+            row.opponent_id
+        };
+        self.league.add(row);
+        self.opponents
+            .entry((row.opponent_id, hand))
+            .or_default()
+            .add(row);
+        self.parks.entry(home_team_id).or_default().add(row);
+    }
+}
+
 /// Adds context to each row using only games on earlier dates. Opponent strength
 /// is starter ER/IP by opponent and pitcher hand; park environment is starter
 /// ER/IP by home-team park proxy. Both are shrunk toward the prior league rate.
 pub fn enrich_historical_context(rows: &mut [PitcherStartLog], hands: &HashMap<u32, char>) {
+    accumulate_historical_context(rows, hands);
+}
+
+/// The fold behind [`enrich_historical_context`], additionally returning the
+/// accumulator state once every row has been absorbed. Live scoring reuses that
+/// final state so it serves the same statistic the model was trained on.
+pub(crate) fn accumulate_historical_context(
+    rows: &mut [PitcherStartLog],
+    hands: &HashMap<u32, char>,
+) -> ContextAccumulators {
     rows.sort_by_key(|row| row.game_date);
-    let mut league = RateStats::default();
-    let mut opponents: HashMap<(u32, char), RateStats> = HashMap::new();
-    let mut parks: HashMap<u32, RateStats> = HashMap::new();
+    let mut state = ContextAccumulators::default();
     let mut index = 0;
     while index < rows.len() {
         let date = rows[index].game_date;
@@ -35,11 +120,6 @@ pub fn enrich_historical_context(rows: &mut [PitcherStartLog], hands: &HashMap<u
             .position(|row| row.game_date > date)
             .map(|offset| index + offset)
             .unwrap_or(rows.len());
-        let league_rate = if league.innings > 0.0 {
-            league.earned_runs / league.innings
-        } else {
-            0.48
-        };
         for row in &mut rows[index..end] {
             let hand = hands.get(&row.pitcher_id).copied().unwrap_or('R');
             row.pitch_hand = Some(hand);
@@ -48,36 +128,18 @@ pub fn enrich_historical_context(rows: &mut [PitcherStartLog], hands: &HashMap<u
             } else {
                 row.opponent_id
             };
-            let opponent_rate = opponents
-                .get(&(row.opponent_id, hand))
-                .copied()
-                .unwrap_or_default()
-                .rate(league_rate, 60.0);
-            let park_rate = parks
-                .get(&home_team_id)
-                .copied()
-                .unwrap_or_default()
-                .rate(league_rate, 120.0);
-            row.historical_opponent_offense = Some((opponent_rate / league_rate).clamp(0.75, 1.30));
-            row.historical_park_factor = Some((park_rate / league_rate).clamp(0.85, 1.15));
+            row.historical_opponent_offense =
+                Some(state.opponent_offense_factor(row.opponent_id, hand));
+            row.historical_park_factor = Some(state.park_factor(home_team_id));
         }
         for row in &rows[index..end] {
             let hand = hands.get(&row.pitcher_id).copied().unwrap_or('R');
-            let home_team_id = if row.home {
-                row.team_id
-            } else {
-                row.opponent_id
-            };
-            league.add(row);
-            opponents
-                .entry((row.opponent_id, hand))
-                .or_default()
-                .add(row);
-            parks.entry(home_team_id).or_default().add(row);
+            state.add(row, hand);
         }
         index = end;
     }
     rows.sort_by_key(|row| (row.pitcher_id, row.game_date));
+    state
 }
 
 #[derive(Deserialize)]

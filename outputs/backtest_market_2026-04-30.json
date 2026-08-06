@@ -1,0 +1,211 @@
+{
+  "provenance": {
+    "model_artifact_id": "pns-blr-v2-2026-04-30-739f27477017",
+    "model_trained_through": "2026-04-30",
+    "sim_params_fit_through": "2026-05-01",
+    "window_from": "2026-05-24",
+    "window_through": "2026-07-16",
+    "draws_per_start": 10000,
+    "snapshot_lead_minutes": 5,
+    "generated_at": "2026-07-30T20:32:58.859226800+00:00"
+  },
+  "coverage": {
+    "starts_replayed": 1164,
+    "starts_with_any_market": 1116,
+    "settled_markets_fetched": 11771,
+    "market_data_earliest": "2026-05-24",
+    "candidate_legs": 8304,
+    "matched_legs": 6112,
+    "dropped_no_first_pitch": 0,
+    "dropped_no_candles": 2181,
+    "dropped_no_valid_quote": 11,
+    "dropped_settlement_mismatch": 0,
+    "settlement_checked": 6112,
+    "settlement_agreed": 6112
+  },
+  "evaluation": {
+    "starts": 1115,
+    "legs": 6112,
+    "rungs": [
+      {
+        "threshold": 1,
+        "legs": 5,
+        "model_probability": 0.9741130467873698,
+        "sim_probability": 0.9729599999999999,
+        "market_probability": 0.922,
+        "observed_rate": 1.0,
+        "model_brier": 0.0009073540097311712,
+        "sim_brier": 0.0009438840000000002,
+        "market_brier": 0.006369999999999996
+      },
+      {
+        "threshold": 2,
+        "legs": 395,
+        "model_probability": 0.9257760570634844,
+        "sim_probability": 0.9240506329113926,
+        "market_probability": 0.9061012658227834,
+        "observed_rate": 0.9088607594936708,
+        "model_brier": 0.08376208094063535,
+        "sim_brier": 0.08260763412658227,
+        "market_brier": 0.08121101265822782
+      },
+      {
+        "threshold": 3,
+        "legs": 841,
+        "model_probability": 0.853891397703616,
+        "sim_probability": 0.8498359096313924,
+        "market_probability": 0.8472294887039229,
+        "observed_rate": 0.8263971462544589,
+        "model_brier": 0.14130455932473265,
+        "sim_brier": 0.13957478140309165,
+        "market_brier": 0.13333466111771705
+      },
+      {
+        "threshold": 4,
+        "legs": 673,
+        "model_probability": 0.724860916330018,
+        "sim_probability": 0.7106939078751858,
+        "market_probability": 0.7163595839524528,
+        "observed_rate": 0.7176820208023774,
+        "model_brier": 0.19059527957374126,
+        "sim_brier": 0.18733541301634482,
+        "market_brier": 0.18088506686478428
+      },
+      {
+        "threshold": 5,
+        "legs": 746,
+        "model_probability": 0.568521434187408,
+        "sim_probability": 0.5442849865951741,
+        "market_probability": 0.5521447721179624,
+        "observed_rate": 0.5335120643431636,
+        "model_brier": 0.22990822992950144,
+        "sim_brier": 0.2233753294101881,
+        "market_brier": 0.21513833780160832
+      },
+      {
+        "threshold": 6,
+        "legs": 740,
+        "model_probability": 0.403595628800052,
+        "sim_probability": 0.37399932432432426,
+        "market_probability": 0.3856081081081083,
+        "observed_rate": 0.3932432432432432,
+        "model_brier": 0.21811439096896262,
+        "sim_brier": 0.21562266209459433,
+        "market_brier": 0.2055014864864861
+      },
+      {
+        "threshold": 7,
+        "legs": 773,
+        "model_probability": 0.27921795251507153,
+        "sim_probability": 0.24697529107373872,
+        "market_probability": 0.2558279430789137,
+        "observed_rate": 0.2703751617076326,
+        "model_brier": 0.17785096302450612,
+        "sim_brier": 0.1770284260672703,
+        "market_brier": 0.17026044631306594
+      },
+      {
+        "threshold": 8,
+        "legs": 749,
+        "model_probability": 0.17382414602979288,
+        "sim_probability": 0.14781708945260336,
+        "market_probability": 0.15688918558077436,
+        "observed_rate": 0.1548731642189586,
+        "model_brier": 0.12145418528668264,
+        "sim_brier": 0.12058342742323098,
+        "market_brier": 0.11676375166889198
+      },
+      {
+        "threshold": 9,
+        "legs": 567,
+        "model_probability": 0.11901740668796011,
+        "sim_probability": 0.09850987654320982,
+        "market_probability": 0.11031746031746023,
+        "observed_rate": 0.14638447971781304,
+        "model_brier": 0.12146672474565604,
+        "sim_brier": 0.1226295111992946,
+        "market_brier": 0.11975811287477944
+      },
+      {
+        "threshold": 10,
+        "legs": 404,
+        "model_probability": 0.08359083924864577,
+        "sim_probability": 0.06857004950495046,
+        "market_probability": 0.0868935643564356,
+        "observed_rate": 0.09158415841584158,
+        "model_brier": 0.07925911997678833,
+        "sim_brier": 0.08007819928217823,
+        "market_brier": 0.07935365099009897
+      },
+      {
+        "threshold": 11,
+        "legs": 160,
+        "model_probability": 0.06424645719959708,
+        "sim_probability": 0.05452312500000002,
+        "market_probability": 0.07512500000000003,
+        "observed_rate": 0.05625,
+        "model_brier": 0.05064621176843835,
+        "sim_brier": 0.051170637312500024,
+        "market_brier": 0.05228125000000002
+      },
+      {
+        "threshold": 12,
+        "legs": 50,
+        "model_probability": 0.05223057348078715,
+        "sim_probability": 0.04397,
+        "market_probability": 0.06680000000000001,
+        "observed_rate": 0.08,
+        "model_brier": 0.07349408001560018,
+        "sim_brier": 0.0744345138,
+        "market_brier": 0.07328499999999999
+      },
+      {
+        "threshold": 13,
+        "legs": 8,
+        "model_probability": 0.03508308611195135,
+        "sim_probability": 0.031087500000000004,
+        "market_probability": 0.047499999999999994,
+        "observed_rate": 0.0,
+        "model_brier": 0.0014835407506510684,
+        "sim_brier": 0.0012866262500000002,
+        "market_brier": 0.00263125
+      },
+      {
+        "threshold": 14,
+        "legs": 1,
+        "model_probability": 0.022897082490882927,
+        "sim_probability": 0.014699999999999998,
+        "market_probability": 0.055,
+        "observed_rate": 0.0,
+        "model_brier": 0.0005242763865942975,
+        "sim_brier": 0.00021608999999999995,
+        "market_brier": 0.003025
+      }
+    ],
+    "model": {
+      "pooled_brier": 0.15612652032337476,
+      "rung_log_loss": 0.4815765792972011,
+      "ece": 0.012579098949867432
+    },
+    "sim": {
+      "pooled_brier": 0.15432831271596834,
+      "rung_log_loss": 0.4760500211848471,
+      "ece": 0.015524738219895405
+    },
+    "market": {
+      "pooled_brier": 0.14882641115837783,
+      "rung_log_loss": 0.46084172877560836,
+      "ece": 0.014014234293193858
+    },
+    "sim_minus_market_brier": {
+      "point": 0.005501901557591633,
+      "low": 0.0029571524495569605,
+      "high": 0.00815106784739384
+    },
+    "model_minus_market_brier": {
+      "point": 0.0073001091649980655,
+      "low": 0.004440765618111184,
+      "high": 0.01017347829455427
+    }
+  }
+}

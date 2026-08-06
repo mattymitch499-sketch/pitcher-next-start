@@ -110,6 +110,18 @@ pub struct DecisionCard {
     pub expected_strikeouts_compositional: f64,
     pub strikeout_over_probabilities: Vec<StrikeoutOverProbability>,
     pub strikeout_probabilities: Vec<f64>,
+    /// The model's per-batter-faced strikeout rate and expected batters faced,
+    /// carried off the projection so the per-PA simulator can price this start
+    /// without re-scoring it.
+    #[serde(default)]
+    pub k_rate_mean: f64,
+    #[serde(default)]
+    pub batters_faced_mean: f64,
+    /// The per-PA simulator's PMF over exact strikeouts, same shape as
+    /// `strikeout_probabilities`. `None` until the opposing lineup is posted (or
+    /// when batter data is unavailable) — never a projected-lineup guess.
+    #[serde(default)]
+    pub sim_strikeout_probabilities: Option<Vec<f64>>,
     pub confidence: Confidence,
     pub judgment: String,
     pub outlook_summary: String,
@@ -311,6 +323,9 @@ pub fn build_card(
             .iter()
             .map(|value| round4(*value))
             .collect(),
+        k_rate_mean: p.k_rate_mean,
+        batters_faced_mean: p.batters_faced_mean,
+        sim_strikeout_probabilities: None,
         confidence,
         judgment,
         outlook_summary,

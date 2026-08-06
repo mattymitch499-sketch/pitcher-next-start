@@ -129,4 +129,33 @@ mod tests {
         assert_eq!(loaded.len(), rows.len());
         assert_eq!(loaded[0].game_pk, rows[0].game_pk);
     }
+
+    /// The shipped v2 dataset has no `opponent_batters` column, and `data::asof`
+    /// seeds every live slate from it, so it has to keep reading.
+    #[test]
+    fn v2_shaped_csv_reads_with_empty_lineups() {
+        let v2 = "pitcher_id,pitcher_name,game_pk,game_date,team_id,opponent_id,opponent_name,\
+                  home,innings_pitched,strikeouts,walks,home_runs,earned_runs,hits,batters_faced,\
+                  pitch_count,ground_ball_pct,avg_fb_velo,historical_park_factor,\
+                  historical_opponent_offense,pitch_hand\n\
+                  425794,Adam Wainwright,718288,2023-05-06,138,116,Detroit Tigers,true,5.0,5,0,0,\
+                  4,8,23,90,0.5,87.39249999999997,1.1087654574024723,0.8577219917502861,R\n";
+        let rows = super::read_csv_text(v2).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].game_pk, 718288);
+        assert_eq!(rows[0].pitch_hand, Some('R'));
+        assert!(rows[0].opponent_batters.is_empty());
+    }
+
+    /// And a v3 file carries the lineup back out of the single packed column.
+    #[test]
+    fn lineups_round_trip_through_the_csv() {
+        let mut rows = crate::data::pitcher_logs::fixture_starts().unwrap();
+        rows[0].opponent_batters = vec![607208, 681082, 547180];
+        let path = std::env::temp_dir().join("pns-training-lineup-roundtrip.csv");
+        super::write_csv(&rows, &path).unwrap();
+        let loaded = super::read_csv(path).unwrap();
+        assert_eq!(loaded[0].opponent_batters, vec![607208, 681082, 547180]);
+        assert!(loaded[1].opponent_batters.is_empty());
+    }
 }

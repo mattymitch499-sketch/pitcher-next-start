@@ -1,7 +1,10 @@
+pub mod asof;
+pub mod batters;
 pub mod context;
 pub mod dataset;
 pub mod enrich;
 pub mod kalshi;
+pub mod lineups;
 pub mod pitcher_logs;
 pub mod schedule;
 pub mod types;
@@ -47,6 +50,73 @@ impl MlbStatsClient {
             300,
         )?;
         schedule::normalize_schedule(&response, date)
+    }
+
+    /// Posted starting lineups for a slate. Shares the `probable_starters` TTL
+    /// because cards get posted, and revised, through the afternoon.
+    pub fn slate_lineups(&self, date: NaiveDate) -> Result<Vec<lineups::GameLineup>> {
+        let response = self.request_text(
+            self.http
+                .get(format!("{}/schedule", self.base_url))
+                .query(&[
+                    ("sportId", "1"),
+                    ("date", &date.to_string()),
+                    ("hydrate", "probablePitcher,lineups"),
+                ]),
+            &format!("lineups-{date}"),
+            300,
+        )?;
+        lineups::normalize_lineups(&response, date)
+    }
+
+    /// Every game scheduled in `[start, end]`: pk, official date, first-pitch
+    /// timestamp, and whether it is final. A range whose end has already passed
+    /// is immutable and cached long; a range touching today keeps a short TTL so
+    /// games flip to final as they finish.
+    pub fn game_index(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<schedule::GameIndexEntry>> {
+        let today = chrono::Utc::now().date_naive();
+        // A day game can still be live shortly after local midnight UTC-side, so
+        // "safely in the past" means at least two days old.
+        let ttl = if end < today - chrono::Duration::days(2) {
+            2_592_000
+        } else {
+            3_600
+        };
+        let response = self.request_text(
+            self.http
+                .get(format!("{}/schedule", self.base_url))
+                .query(&[
+                    ("sportId", "1"),
+                    ("startDate", &start.to_string()),
+                    ("endDate", &end.to_string()),
+                ]),
+            &format!("game-index-{start}-{end}"),
+            ttl,
+        )?;
+        schedule::normalize_game_index(&response)
+    }
+
+    /// Box score for a completed game. `hydrate=person` is what puts `pitchHand`
+    /// on the player objects; the plain box score carries no handedness at all.
+    ///
+    /// A final box score never changes, so it is cached for 30 days — long enough
+    /// that a historical backfill re-run costs nothing, short enough that the cache
+    /// directory still turns over within a season. A game that is not final yet is
+    /// returned but not cached, so a partial line never sticks for a month.
+    pub fn game_boxscore(&self, game_pk: u32) -> Result<lineups::GameBoxscore> {
+        let response = self.request_text_if(
+            self.http
+                .get(format!("{}/game/{game_pk}/boxscore", self.base_url))
+                .query(&[("hydrate", "person")]),
+            &format!("boxscore-{game_pk}"),
+            2_592_000,
+            is_final_boxscore,
+        )?;
+        lineups::normalize_boxscore(&response)
     }
 
     pub fn pitcher_starts(
@@ -145,26 +215,6 @@ impl MlbStatsClient {
         context::normalize_pitcher_hands(&response)
     }
 
-    pub fn slate_context(&self, season: i32) -> Result<context::SlateContext> {
-        let fetch = |code: &str| -> Result<String> {
-            self.request_text(
-                self.http
-                    .get(format!("{}/teams/stats", self.base_url))
-                    .query(&[
-                        ("stats", "statSplits"),
-                        ("group", "hitting"),
-                        ("season", &season.to_string()),
-                        ("gameType", "R"),
-                        ("sportIds", "1"),
-                        ("sitCodes", code),
-                    ]),
-                &format!("team-context-{season}-{code}"),
-                3_600,
-            )
-        };
-        context::normalize_slate_context(&fetch("vl")?, &fetch("vr")?, &fetch("h")?, &fetch("a")?)
-    }
-
     pub fn savant_fastball_velocity(
         &self,
         pitcher_id: u32,
@@ -259,6 +309,20 @@ fn has_game_log_splits(text: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when a box score is for a finished game. MLB only adds the game-duration
+/// label `T` (and `Att`) to the `info` block once the game is final, so this keeps
+/// an in-progress line out of the month-long box score cache.
+fn is_final_boxscore(text: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|value| {
+            value["info"]
+                .as_array()
+                .map(|info| info.iter().any(|item| item["label"] == "T"))
+        })
+        .unwrap_or(false)
+}
+
 fn cache_path(key: &str) -> PathBuf {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     key.hash(&mut hasher);
@@ -284,5 +348,16 @@ mod tests {
         assert!(!super::has_game_log_splits(empty));
         assert!(super::has_game_log_splits(populated));
         assert!(!super::has_game_log_splits("not json"));
+    }
+
+    #[test]
+    fn final_boxscore_detection_keys_off_the_game_duration_label() {
+        let live =
+            r#"{"info":[{"label":"Pitches-strikes","value":"x"},{"label":"Venue","value":"y"}]}"#;
+        let finished =
+            r#"{"info":[{"label":"T","value":"2:42"},{"label":"Att","value":"30,000"}]}"#;
+        assert!(!super::is_final_boxscore(live));
+        assert!(super::is_final_boxscore(finished));
+        assert!(!super::is_final_boxscore("not json"));
     }
 }

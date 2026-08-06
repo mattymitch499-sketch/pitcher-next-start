@@ -33,15 +33,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         root.join("outputs/validation.json"),
         serde_json::to_string_pretty(&slate.validation)?,
     )?;
+    let simulated = slate
+        .cards
+        .iter()
+        .filter(|card| card.sim_strikeout_probabilities.is_some())
+        .count();
+    println!(
+        "simulator priced {simulated} of {} starts (the rest have no posted lineup yet)",
+        slate.cards.len()
+    );
     for card in slate.cards {
+        // Both forecasters' expected strikeouts, so a divergence is visible
+        // before it ever reaches the paper log.
+        let sim = card
+            .sim_strikeout_probabilities
+            .as_ref()
+            .map(|pmf| pns_core::sim::expected_strikeouts(pmf));
         println!(
-            "{}: FIP {:.2}, runs {:.2}/{:.2}/{:.2}, {:?}",
+            "{}: FIP {:.2}, runs {:.2}/{:.2}/{:.2}, {:?}; K model {:.2}{}",
             card.pitcher_name,
             card.projected_fip,
             card.expected_runs_low,
             card.expected_runs_base,
             card.expected_runs_high,
-            card.confidence
+            card.confidence,
+            card.expected_strikeouts_compositional,
+            match sim {
+                Some(sim) => format!(" / sim {sim:.2}"),
+                None => " / sim pending".into(),
+            }
         );
     }
     Ok(())

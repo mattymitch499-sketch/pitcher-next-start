@@ -1,3 +1,4 @@
+pub mod backtest;
 pub mod card;
 pub mod data;
 pub mod error;
@@ -5,9 +6,9 @@ pub mod features;
 pub mod model;
 pub mod paper;
 pub mod paper_stats;
+pub mod sim;
 pub mod tracking;
 
-use chrono::Datelike;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -138,16 +139,14 @@ pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
     let mut contexts = client.probable_starters(target_date)?;
     let pitcher_ids: Vec<_> = contexts.iter().map(|context| context.pitcher_id).collect();
     let hands = client.pitcher_hands(&pitcher_ids)?;
-    let context_season = if target_date.month() <= 4 {
-        target_date.year() - 1
-    } else {
-        target_date.year()
-    };
-    let slate_context = client.slate_context(context_season)?;
+    // Serve the same opponent/park statistic the model was trained on, not the
+    // live team-splits ratio it used to be scored against.
+    let as_of =
+        data::asof::AsOfContext::build(&client, target_date, artifact.training.data_through)?;
     for context in &mut contexts {
         context.pitcher_hand = hands.get(&context.pitcher_id).copied();
-        context.park_factor = slate_context.park_factor(context.home_team_id);
-        context.opponent_offense = slate_context.opponent_factor(
+        context.park_factor = as_of.park_factor(context.home_team_id);
+        context.opponent_offense = as_of.opponent_offense_factor(
             context.opponent_id,
             hands.get(&context.pitcher_id).copied().unwrap_or('R'),
         );
@@ -204,7 +203,98 @@ pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
         .filter_map(|row| row.pitch_hand.map(|hand| (row.pitcher_id, hand)))
         .collect();
     data::enrich::enrich_historical_context(&mut starts, &all_hands);
-    score_normalized_detailed(&starts, &contexts, &artifact)
+    let mut slate = score_normalized_detailed(&starts, &contexts, &artifact)?;
+    attach_sim_forecasts(&client, target_date, &mut slate.cards);
+    Ok(slate)
+}
+
+/// Prices each card with the per-PA simulator when the opposing lineup is
+/// posted, storing the PMF on the card for side-by-side logging. Log-only:
+/// nothing here influences positions, and every failure downgrades to a card
+/// data warning so ordinary scoring never breaks on the sim's account.
+fn attach_sim_forecasts(
+    client: &data::MlbStatsClient,
+    date: chrono::NaiveDate,
+    cards: &mut [DecisionCard],
+) {
+    let warn_all = |cards: &mut [DecisionCard], message: String| {
+        for card in cards.iter_mut() {
+            card.data_warnings.push(message.clone());
+        }
+    };
+    let params = match sim::SimParams::load() {
+        Ok(params) => params,
+        Err(error) => {
+            return warn_all(cards, format!("Simulator unavailable: {error}"));
+        }
+    };
+    let lineups = match client.slate_lineups(date) {
+        Ok(lineups) => lineups,
+        Err(error) => {
+            return warn_all(cards, format!("Simulator skipped, no lineup feed: {error}"));
+        }
+    };
+    let rates = match data::batters::live_batter_rates(client, date) {
+        Ok(rates) => rates,
+        Err(error) => {
+            return warn_all(cards, format!("Simulator skipped, no batter data: {error}"));
+        }
+    };
+    for card in cards.iter_mut() {
+        let Some(hand) = card.pitcher_hand else {
+            continue;
+        };
+        // The lineup the pitcher faces is the OTHER side of his game.
+        let lineup = lineups.iter().find_map(|game| {
+            if game.away.probable_pitcher_id == Some(card.pitcher_id) {
+                game.home.batters.as_deref()
+            } else if game.home.probable_pitcher_id == Some(card.pitcher_id) {
+                game.away.batters.as_deref()
+            } else {
+                None
+            }
+        });
+        let Some(batters) = lineup else {
+            card.data_warnings
+                .push("Opposing lineup not posted yet; simulator projection pending.".into());
+            continue;
+        };
+        let inputs = sim::StartInputs::from_lineup(
+            card.k_rate_mean,
+            card.batters_faced_mean,
+            &rates,
+            batters,
+            hand,
+        );
+        card.sim_strikeout_probabilities = Some(sim::simulate_start(
+            &inputs,
+            &params,
+            sim::DEFAULT_DRAWS,
+            sim_seed(card.pitcher_id, &card.target_game_date),
+        ));
+    }
+}
+
+/// Deterministic per-start seed so a projection never jitters between clicks of
+/// the daily button.
+///
+/// Hand-rolled FNV-1a rather than `DefaultHasher`: the standard hasher's output
+/// is explicitly not stable across Rust releases, so a toolchain upgrade would
+/// silently reseed every start and move published probabilities. Same reasoning
+/// as `backtest::ReplayCase::seed`.
+fn sim_seed(pitcher_id: u32, target_game_date: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut absorb = |byte: u8| {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    };
+    for byte in pitcher_id.to_le_bytes() {
+        absorb(byte);
+    }
+    for byte in target_game_date.as_bytes() {
+        absorb(*byte);
+    }
+    hash
 }
 
 fn find_model_artifact() -> Option<PathBuf> {
@@ -352,6 +442,28 @@ pub fn export_predictions_with_model(
 
 #[cfg(test)]
 mod tests {
+    /// The seed must depend on both inputs and must not drift. The pinned
+    /// constant is the point of the test: if a refactor changes it, every
+    /// published simulator probability moves, and this fails instead of the
+    /// change landing silently.
+    #[test]
+    fn sim_seed_is_stable_and_input_dependent() {
+        assert_eq!(
+            super::sim_seed(660271, "2026-07-30"),
+            16_343_921_367_459_293_529
+        );
+        assert_ne!(
+            super::sim_seed(660271, "2026-07-30"),
+            super::sim_seed(660271, "2026-07-31"),
+            "a different date must reseed"
+        );
+        assert_ne!(
+            super::sim_seed(660271, "2026-07-30"),
+            super::sim_seed(660272, "2026-07-30"),
+            "a different pitcher must reseed"
+        );
+    }
+
     #[test]
     fn scores_and_exports_two_fixture_pitchers() {
         let cards = super::score_date_fixture("2026-07-17").unwrap();

@@ -119,6 +119,7 @@ pub fn normalize_game_log(json: &str) -> Result<Vec<PitcherStartLog>> {
             historical_park_factor: None,
             historical_opponent_offense: None,
             pitch_hand: None,
+            opponent_batters: Vec::new(),
         });
     }
     rows.sort_by_key(|row| (row.pitcher_id, row.game_date));

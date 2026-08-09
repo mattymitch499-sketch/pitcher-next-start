@@ -241,6 +241,43 @@ impl MlbStatsClient {
         enrich::normalize_savant_velocity(&response)
     }
 
+    /// Per-start pitch-outcome counts (pitches, swinging strikes, called
+    /// strikes) for one pitcher over a date range.
+    ///
+    /// Deliberately **not** a variant of [`Self::savant_fastball_velocity`]:
+    /// that call passes `hfPT=FF|SI|` and so only ever sees fastballs and
+    /// sinkers. A swinging-strike rate needs every pitch in the denominator, so
+    /// the pitch-type filter is absent here. The response is correspondingly
+    /// several times larger.
+    ///
+    /// Cached for 30 days rather than the velocity call's 6 hours: completed
+    /// pitch-level history does not change, and this is fetched in bulk across
+    /// whole seasons where re-downloading is the dominant cost.
+    pub fn savant_pitch_outcomes(
+        &self,
+        pitcher_id: u32,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<HashMap<NaiveDate, enrich::PitchOutcomes>> {
+        let response = self.request_text(
+            self.http
+                .get("https://baseballsavant.mlb.com/statcast_search/csv")
+                .query(&[
+                    ("all", "true"),
+                    ("player_type", "pitcher"),
+                    ("pitchers_lookup[]", &pitcher_id.to_string()),
+                    ("game_date_gt", &start.to_string()),
+                    ("game_date_lt", &end.to_string()),
+                    ("hfGT", "R|"),
+                    ("type", "details"),
+                    ("group_by", "name"),
+                ]),
+            &format!("savant-outcomes-{pitcher_id}-{start}-{end}"),
+            2_592_000,
+        )?;
+        enrich::normalize_savant_pitch_outcomes(&response)
+    }
+
     fn request_text(
         &self,
         request: reqwest::blocking::RequestBuilder,

@@ -2,6 +2,7 @@ use crate::features::FeatureRow;
 use crate::{PnsError, Projection, Result};
 
 pub mod artifact;
+pub mod whiff;
 
 /// Normal-Inverse-Gamma posterior. `covariance` stores the noise-scaled-out
 /// matrix V_n, so the predictive variance is `noise * (1 + x'V_n x)` where

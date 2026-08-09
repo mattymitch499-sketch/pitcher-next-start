@@ -1,7 +1,7 @@
 use super::types::PitcherStartLog;
 use crate::{PnsError, Result};
 use chrono::NaiveDate;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Default, Clone, Copy)]
@@ -175,6 +175,91 @@ pub fn normalize_savant_velocity(csv_text: &str) -> Result<HashMap<NaiveDate, f6
         .collect())
 }
 
+/// Pitch-outcome counts for one start, from Statcast's per-pitch `description`.
+///
+/// Swinging-strike rate is the best-known leading indicator of future strikeout
+/// rate — it stabilises faster than K rate itself — and the model has never seen
+/// it. These are stored as raw counts rather than rates so a caller can build a
+/// leakage-safe rolling rate by summing whole starts, which a pre-divided rate
+/// cannot do correctly.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PitchOutcomes {
+    pub pitches: u32,
+    pub swinging_strikes: u32,
+    pub called_strikes: u32,
+}
+
+/// Statcast `description` values counted as a swing and miss.
+///
+/// `foul_tip` is included: by rule the batter swung and the catcher caught it
+/// cleanly, which is a whiff, and it is strike three when it happens with two
+/// strikes. `missed_bunt` is included for the same reason. Ordinary `foul` is
+/// not — contact was made. This is the contestable line in the definition, so it
+/// is written down rather than left implicit.
+const SWINGING_STRIKE_DESCRIPTIONS: &[&str] = &[
+    "swinging_strike",
+    "swinging_strike_blocked",
+    "foul_tip",
+    "bunt_foul_tip",
+    "missed_bunt",
+];
+
+impl PitchOutcomes {
+    fn add(&mut self, description: &str) {
+        self.pitches += 1;
+        if SWINGING_STRIKE_DESCRIPTIONS.contains(&description) {
+            self.swinging_strikes += 1;
+        } else if description == "called_strike" {
+            self.called_strikes += 1;
+        }
+    }
+
+    /// Swinging strikes per pitch. `None` when no pitch was recorded.
+    pub fn swinging_strike_rate(&self) -> Option<f64> {
+        (self.pitches > 0).then(|| f64::from(self.swinging_strikes) / f64::from(self.pitches))
+    }
+
+    /// Called-plus-swinging strikes per pitch, the usual "CSW%".
+    pub fn called_plus_swinging_rate(&self) -> Option<f64> {
+        (self.pitches > 0).then(|| {
+            f64::from(self.swinging_strikes + self.called_strikes) / f64::from(self.pitches)
+        })
+    }
+
+    /// Folds another start's counts in, for rolling windows.
+    pub fn merge(&mut self, other: &PitchOutcomes) {
+        self.pitches += other.pitches;
+        self.swinging_strikes += other.swinging_strikes;
+        self.called_strikes += other.called_strikes;
+    }
+}
+
+#[derive(Deserialize)]
+struct SavantOutcomePitch {
+    game_date: String,
+    description: String,
+}
+
+/// Groups a Statcast `type=details` export into per-date pitch-outcome counts.
+///
+/// Unlike [`normalize_savant_velocity`] this must be fed an export with **no**
+/// `hfPT` pitch-type filter, or the denominator counts only fastballs and every
+/// rate comes out wrong.
+pub fn normalize_savant_pitch_outcomes(
+    csv_text: &str,
+) -> Result<HashMap<NaiveDate, PitchOutcomes>> {
+    let cleaned = csv_text.trim_start_matches('\u{feff}');
+    let mut reader = csv::Reader::from_reader(cleaned.as_bytes());
+    let mut grouped: HashMap<NaiveDate, PitchOutcomes> = HashMap::new();
+    for record in reader.deserialize::<SavantOutcomePitch>() {
+        let pitch = record?;
+        let date = NaiveDate::parse_from_str(&pitch.game_date, "%Y-%m-%d")
+            .map_err(|error| PnsError::Normalize(error.to_string()))?;
+        grouped.entry(date).or_default().add(&pitch.description);
+    }
+    Ok(grouped)
+}
+
 pub fn join_velocity(
     rows: &mut [PitcherStartLog],
     pitcher_id: u32,
@@ -195,6 +280,71 @@ mod tests {
             rows[&chrono::NaiveDate::from_ymd_opt(2025, 4, 1).unwrap()],
             94.0
         );
+    }
+
+    /// Every Statcast `description` value must land in exactly one bucket, and
+    /// the denominator must count *every* pitch. Getting this wrong inflates or
+    /// deflates the rate silently, so each value is pinned by name.
+    #[test]
+    fn pitch_outcomes_bucket_every_description() {
+        let csv = "game_date,description\n\
+                   2025-04-01,swinging_strike\n\
+                   2025-04-01,swinging_strike_blocked\n\
+                   2025-04-01,foul_tip\n\
+                   2025-04-01,missed_bunt\n\
+                   2025-04-01,called_strike\n\
+                   2025-04-01,called_strike\n\
+                   2025-04-01,foul\n\
+                   2025-04-01,ball\n\
+                   2025-04-01,hit_into_play\n\
+                   2025-04-01,hit_by_pitch\n\
+                   2025-04-07,swinging_strike\n";
+        let rows = super::normalize_savant_pitch_outcomes(csv).unwrap();
+
+        let first = rows[&chrono::NaiveDate::from_ymd_opt(2025, 4, 1).unwrap()];
+        assert_eq!(first.pitches, 10, "every row is a pitch");
+        assert_eq!(
+            first.swinging_strikes, 4,
+            "swinging, blocked, foul tip and missed bunt are whiffs"
+        );
+        assert_eq!(first.called_strikes, 2);
+        // foul / ball / hit_into_play / hit_by_pitch are pitches and nothing else.
+        assert!((first.swinging_strike_rate().unwrap() - 0.4).abs() < 1e-12);
+        assert!((first.called_plus_swinging_rate().unwrap() - 0.6).abs() < 1e-12);
+
+        // Dates stay separate — a rolling window sums whole starts.
+        let second = rows[&chrono::NaiveDate::from_ymd_opt(2025, 4, 7).unwrap()];
+        assert_eq!(second.pitches, 1);
+        assert_eq!(second.swinging_strikes, 1);
+    }
+
+    /// Rates come from summed counts, not averaged rates: a 100-pitch start and
+    /// a 10-pitch start must not carry equal weight.
+    #[test]
+    fn merging_outcomes_weights_by_pitch_count() {
+        let mut heavy = super::PitchOutcomes {
+            pitches: 100,
+            swinging_strikes: 10,
+            called_strikes: 0,
+        };
+        let light = super::PitchOutcomes {
+            pitches: 10,
+            swinging_strikes: 5,
+            called_strikes: 0,
+        };
+        heavy.merge(&light);
+        assert_eq!(heavy.pitches, 110);
+        assert_eq!(heavy.swinging_strikes, 15);
+        // 15/110, not the 0.30 that averaging 0.10 and 0.50 would give.
+        let rate = heavy.swinging_strike_rate().unwrap();
+        assert!((rate - 15.0 / 110.0).abs() < 1e-12, "rate was {rate}");
+    }
+
+    #[test]
+    fn empty_outcomes_have_no_rate_rather_than_a_zero() {
+        let empty = super::PitchOutcomes::default();
+        assert_eq!(empty.swinging_strike_rate(), None);
+        assert_eq!(empty.called_plus_swinging_rate(), None);
     }
 
     #[test]

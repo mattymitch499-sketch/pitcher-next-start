@@ -1,5 +1,6 @@
 pub mod backtest;
 pub mod card;
+pub mod clv;
 pub mod data;
 pub mod error;
 pub mod features;

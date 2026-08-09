@@ -1,0 +1,245 @@
+{
+  "provenance": {
+    "model_artifact_id": "pns-blr-v2-2026-04-30-739f27477017",
+    "model_trained_through": "2026-04-30",
+    "sim_params_fit_through": "2026-05-01",
+    "window_from": "2026-05-24",
+    "window_through": "2026-07-16",
+    "draws_per_start": 10000,
+    "snapshot_lead_minutes": 5,
+    "lookback_hours": 24,
+    "sim_max_hours": 3.0,
+    "primary_model_hours": 6.0,
+    "primary_sim_hours": 3.0,
+    "generated_at": "2026-08-08T14:05:55.062900300+00:00"
+  },
+  "coverage": {
+    "starts_processed": 1164,
+    "starts_replayed": 1164,
+    "starts_with_any_market": 1116,
+    "settled_markets_fetched": 13458,
+    "market_data_earliest": "2026-05-24",
+    "candidate_legs": 8304,
+    "matched_legs": 8284,
+    "dropped_no_first_pitch": 0,
+    "dropped_no_candles": 7,
+    "dropped_no_close_quote": 13,
+    "dropped_settlement_mismatch": 0,
+    "settlement_checked": 8284,
+    "settlement_agreed": 8284,
+    "legs_priced_at_anchor": [
+      [
+        "T-23h",
+        443
+      ],
+      [
+        "T-18h",
+        4007
+      ],
+      [
+        "T-12h",
+        7219
+      ],
+      [
+        "T-6h",
+        7982
+      ],
+      [
+        "T-3h",
+        8165
+      ],
+      [
+        "T-1h",
+        8261
+      ]
+    ]
+  },
+  "model": [
+    {
+      "hours_before": 23.0,
+      "legs": 443,
+      "starts": 69,
+      "drift_slope": {
+        "point": 0.07519907077222626,
+        "low": -0.06722547180606182,
+        "high": 0.180156735416529
+      },
+      "hit_rate": {
+        "point": 0.5558035714285714,
+        "low": 0.43842613589533397,
+        "high": 0.6678412571286828
+      },
+      "pnl_per_contract": {
+        "point": -2.8080357142857144,
+        "low": -11.8,
+        "high": 7.0003217631861805
+      },
+      "signal_legs": 224,
+      "mean_abs_signal": 0.062002296922382856,
+      "mean_abs_drift": 0.030744920993228005
+    },
+    {
+      "hours_before": 18.0,
+      "legs": 4007,
+      "starts": 568,
+      "drift_slope": {
+        "point": 0.07582558069349749,
+        "low": 0.04758755369259238,
+        "high": 0.10403991682462857
+      },
+      "hit_rate": {
+        "point": 0.5785036880927292,
+        "low": 0.5405865955274859,
+        "high": 0.6180198587444746
+      },
+      "pnl_per_contract": {
+        "point": -3.108535300316122,
+        "low": -6.297453777779954,
+        "high": 0.21803571333601635
+      },
+      "signal_legs": 1898,
+      "mean_abs_signal": 0.06265632170491318,
+      "mean_abs_drift": 0.0237996006987773
+    },
+    {
+      "hours_before": 12.0,
+      "legs": 7219,
+      "starts": 997,
+      "drift_slope": {
+        "point": 0.058584768276391266,
+        "low": 0.03976600406962439,
+        "high": 0.0776348584177341
+      },
+      "hit_rate": {
+        "point": 0.5630034522439585,
+        "low": 0.5337652528153958,
+        "high": 0.5923020321828899
+      },
+      "pnl_per_contract": {
+        "point": -3.132911392405063,
+        "low": -5.500090019899338,
+        "high": -0.7378798564504334
+      },
+      "signal_legs": 3476,
+      "mean_abs_signal": 0.06345509067635317,
+      "mean_abs_drift": 0.021315971741238192
+    },
+    {
+      "hours_before": 6.0,
+      "legs": 7982,
+      "starts": 1084,
+      "drift_slope": {
+        "point": 0.020616002723619246,
+        "low": 0.007425053674608538,
+        "high": 0.033476961904943946
+      },
+      "hit_rate": {
+        "point": 0.5317845289762574,
+        "low": 0.507719978271273,
+        "high": 0.5558411740594059
+      },
+      "pnl_per_contract": {
+        "point": -3.382180239979576,
+        "low": -5.691101995259606,
+        "high": -1.1174863097292436
+      },
+      "signal_legs": 3917,
+      "mean_abs_signal": 0.06384006961799304,
+      "mean_abs_drift": 0.01427900275620154
+    },
+    {
+      "hours_before": 3.0,
+      "legs": 8165,
+      "starts": 1102,
+      "drift_slope": {
+        "point": 0.009324040320737748,
+        "low": -0.0006782132330508181,
+        "high": 0.019545492525334534
+      },
+      "hit_rate": {
+        "point": 0.5272383354350567,
+        "low": 0.5058780615894463,
+        "high": 0.5490485916532076
+      },
+      "pnl_per_contract": {
+        "point": -2.765699873896595,
+        "low": -4.995504196921168,
+        "high": -0.4744254131393996
+      },
+      "signal_legs": 3965,
+      "mean_abs_signal": 0.063828349666903,
+      "mean_abs_drift": 0.010567666870790094
+    },
+    {
+      "hours_before": 1.0,
+      "legs": 8261,
+      "starts": 1112,
+      "drift_slope": {
+        "point": 0.002850221034700032,
+        "low": -0.0011876858941737823,
+        "high": 0.007090696538341408
+      },
+      "hit_rate": {
+        "point": 0.5049677098857427,
+        "low": 0.49021661412766504,
+        "high": 0.5199232185473507
+      },
+      "pnl_per_contract": {
+        "point": -3.341530054644809,
+        "low": -5.5246990840093355,
+        "high": -1.0503354557551086
+      },
+      "signal_legs": 4026,
+      "mean_abs_signal": 0.0641257645664729,
+      "mean_abs_drift": 0.0051676552475488635
+    }
+  ],
+  "sim": [
+    {
+      "hours_before": 3.0,
+      "legs": 8165,
+      "starts": 1102,
+      "drift_slope": {
+        "point": 0.02788583524820153,
+        "low": 0.017276765852299206,
+        "high": 0.038223708366051753
+      },
+      "hit_rate": {
+        "point": 0.5756734240488753,
+        "low": 0.5525490812421627,
+        "high": 0.5986423366325027
+      },
+      "pnl_per_contract": {
+        "point": -2.1163565676201057,
+        "low": -4.55437796266316,
+        "high": 0.32313996661694033
+      },
+      "signal_legs": 3601,
+      "mean_abs_signal": 0.058111243110838935,
+      "mean_abs_drift": 0.010567666870790094
+    },
+    {
+      "hours_before": 1.0,
+      "legs": 8261,
+      "starts": 1112,
+      "drift_slope": {
+        "point": 0.005953606136443222,
+        "low": 0.0010044997017853705,
+        "high": 0.011327545537194806
+      },
+      "hit_rate": {
+        "point": 0.5094206974128234,
+        "low": 0.49266191053670216,
+        "high": 0.5254879983494024
+      },
+      "pnl_per_contract": {
+        "point": -2.9170416197975255,
+        "low": -5.385045060335385,
+        "high": -0.4188557116489999
+      },
+      "signal_legs": 3556,
+      "mean_abs_signal": 0.057352063914780406,
+      "mean_abs_drift": 0.0051676552475488635
+    }
+  ]
+}

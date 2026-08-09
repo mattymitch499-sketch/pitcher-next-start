@@ -29,10 +29,24 @@
 //! window; `--model` plus `--through` closes the caveat completely, and the
 //! `caveat` field then says so.
 //!
+//! **Which objective to minimise is an open question, and the default is the
+//! conservative answer.** `--objective workload` (default) matches simulated
+//! batters-faced quantiles to observed ones; `--objective forecast` scores the
+//! pooled survival-ladder Brier the backtest reports, on the fit window. Fitted
+//! properly (`--restarts 8`) the two disagree sharply — the workload optimum
+//! reaches a quantile loss of 0.80 against the forecast optimum's 5.00, while
+//! the forecast optimum moves `traffic_slope` in the opposite direction. Neither
+//! moved out-of-sample Brier by more than 0.0002 (measured 2026-08-07:
+//! shipped 0.11333, workload 0.11338, forecast 0.11325), which is the useful
+//! finding: **the hazard is not where the simulator's remaining error lives.**
+//! Both settings are kept so that conclusion can be re-tested rather than
+//! taken on trust.
+//!
 //! Usage:
-//! `cargo run --release -p pns-core --example fit_sim_params -- [--model PATH] [--through YYYY-MM-DD] [--draws N] [--seed N] [--out PATH]`
+//! `cargo run --release -p pns-core --example fit_sim_params -- [--model PATH] [--through YYYY-MM-DD] [--draws N] [--seed N] [--restarts N] [--objective workload|forecast] [--out PATH]`
 
 use chrono::NaiveDate;
+use pns_core::backtest::RUNGS;
 use pns_core::data::batters::BatterKRates;
 use pns_core::model::artifact::ModelArtifact;
 use pns_core::sim::{
@@ -69,6 +83,63 @@ const AXES: [(&str, f64, f64); 4] = [
 const ROUNDS: usize = 3;
 const GRID_POINTS: usize = 7;
 
+/// Deterministic restarts, on top of the one that begins at the defaults.
+///
+/// Coordinate descent only accepts a move that improves the loss on its own
+/// axis, so it halts wherever no single axis helps — even when a joint move
+/// would. That is not hypothetical here: the shipped historical fit
+/// (`models/pns-sim-params-hist-2026-04-30.json`) left `intercept`,
+/// `traffic_slope` and `pivot_scale` at *exactly* their defaults, moving only
+/// `pa_slope`. Restarting from a spread of points is the cheapest escape that
+/// keeps the search fully deterministic.
+///
+/// **Default 0 on purpose.** Multi-start works — it found a workload loss of
+/// 0.80 where the single start stalled at 1.80 — but those better-fitting
+/// parameters *forecast worse* out of sample (backtest Brier 0.11338 against
+/// the shipped 0.11333, measured 2026-08-07). Until the objective question is
+/// settled, the default has to reproduce the artifact that is actually shipped,
+/// or regenerating params silently downgrades them. Pass `--restarts 8` to
+/// search properly.
+const DEFAULT_RESTARTS: usize = 0;
+
+/// Halton bases, one per axis. Coprime bases stop the four coordinates from
+/// advancing in lockstep the way a shared base (or a uniform grid) would.
+const HALTON_BASES: [usize; 4] = [2, 3, 5, 7];
+
+/// Radical inverse of `index` in `base` — a low-discrepancy point in (0, 1).
+///
+/// Restart positions have to be reproducible run to run, and every other
+/// randomness source in this project is hand-rolled for exactly that reason
+/// (`sim_seed`, the cluster bootstrap). A Halton sequence spreads the restarts
+/// across the box with no RNG and no hand-picked table to drift out of date.
+fn halton(mut index: usize, base: usize) -> f64 {
+    let (mut fraction, mut result) = (1.0, 0.0);
+    while index > 0 {
+        fraction /= base as f64;
+        result += fraction * (index % base) as f64;
+        index /= base;
+    }
+    result
+}
+
+/// Where restart `index` begins. Restart 0 is the defaults, so the search
+/// strictly contains the single-start version it replaces: rounds share a
+/// schedule that depends only on the round index, so restart 0 replays the old
+/// trajectory move for move and the best-of pass can only improve on it.
+fn restart_hazard(index: usize) -> pns_core::sim::RemovalHazard {
+    let mut hazard = SimParams::defaults().hazard;
+    if index > 0 {
+        for (axis, (_, low, high)) in AXES.iter().enumerate() {
+            set_axis(
+                &mut hazard,
+                axis,
+                low + (high - low) * halton(index, HALTON_BASES[axis]),
+            );
+        }
+    }
+    hazard
+}
+
 /// Starts sampled for the simulator-versus-model strikeout comparison.
 const COMPARISON_STARTS: usize = 1_000;
 
@@ -78,6 +149,10 @@ struct Args {
     seed: u64,
     model: PathBuf,
     out: PathBuf,
+    /// Restarts beyond the one that begins at the defaults. `0` reproduces the
+    /// single-start search this replaces.
+    restarts: usize,
+    objective: Objective,
 }
 
 /// One historical start, resolved into everything the simulator needs plus the
@@ -85,9 +160,46 @@ struct Args {
 struct Fitted {
     inputs: StartInputs,
     observed_batters_faced: usize,
+    observed_strikeouts: u16,
     model_expected_strikeouts: f64,
     bucket: usize,
     seed: u64,
+}
+
+/// What the search minimises.
+///
+/// `Workload` matches simulated batters-faced quantiles to observed ones. It is
+/// the original objective and a *proxy*: it never looks at a strikeout. Fitting
+/// it 2.25x better (loss 1.80 -> 0.80, measured 2026-08-07) made out-of-sample
+/// strikeout Brier slightly **worse** (0.11333 -> 0.11338), because the hazard
+/// bought its workload fit by keeping struggling pitchers in longer — and the
+/// outcome alphabet is league-average for everyone, so those extra batters
+/// strike out at a rate reality does not reproduce.
+///
+/// `Forecast` scores candidates on the pooled survival-ladder Brier the backtest
+/// actually reports, computed on the fit window. It optimises the target rather
+/// than a proxy for it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Objective {
+    Workload,
+    Forecast,
+}
+
+impl Objective {
+    fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        match raw {
+            "workload" => Ok(Objective::Workload),
+            "forecast" => Ok(Objective::Forecast),
+            other => Err(format!("--objective must be workload or forecast, got {other}").into()),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Objective::Workload => "workload",
+            Objective::Forecast => "forecast",
+        }
+    }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -172,6 +284,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 hand,
             ),
             observed_batters_faced: (start.batters_faced as usize).min(MAX_BATTERS_FACED),
+            observed_strikeouts: start.strikeouts,
             model_expected_strikeouts,
             bucket: 0,
             seed: 0,
@@ -204,33 +317,59 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let stride = fitted.len().div_ceil(SEARCH_STARTS).max(1);
     let sample: Vec<&Fitted> = fitted.iter().step_by(stride).collect();
     eprintln!(
-        "searching on {} of {} starts at {} draws each",
+        "searching on {} of {} starts at {} draws each, minimising {} loss",
         sample.len(),
         fitted.len(),
-        args.draws
+        args.draws,
+        args.objective.label()
     );
     let mut hazard = SimParams::defaults().hazard;
-    let mut best_loss = evaluate(&hazard, &sample, &observed, args.draws).0;
-    for round in 0..ROUNDS {
-        for (axis, (name, low, high)) in AXES.iter().enumerate() {
-            let span = (high - low) / 2f64.powi(round as i32);
-            let center = axis_value(&hazard, axis);
-            for point in 0..GRID_POINTS {
-                let value = (center - span / 2.0 + span * point as f64 / (GRID_POINTS - 1) as f64)
-                    .clamp(*low, *high);
-                let mut candidate = hazard;
-                set_axis(&mut candidate, axis, value);
-                let (loss, _) = evaluate(&candidate, &sample, &observed, args.draws);
-                if loss < best_loss {
-                    best_loss = loss;
-                    hazard = candidate;
+    let mut best_loss = f64::INFINITY;
+    for restart in 0..=args.restarts {
+        let mut local = restart_hazard(restart);
+        let mut local_loss = search_loss(args.objective, &local, &sample, &observed, args.draws);
+        let entry_loss = local_loss;
+        for round in 0..ROUNDS {
+            for (axis, (_, low, high)) in AXES.iter().enumerate() {
+                let span = (high - low) / 2f64.powi(round as i32);
+                let center = axis_value(&local, axis);
+                for point in 0..GRID_POINTS {
+                    let value = (center - span / 2.0
+                        + span * point as f64 / (GRID_POINTS - 1) as f64)
+                        .clamp(*low, *high);
+                    let mut candidate = local;
+                    set_axis(&mut candidate, axis, value);
+                    let loss =
+                        search_loss(args.objective, &candidate, &sample, &observed, args.draws);
+                    if loss < local_loss {
+                        local_loss = loss;
+                        local = candidate;
+                    }
                 }
             }
-            eprintln!(
-                "round {round} {name}: {:.4} (loss {best_loss:.4})",
-                axis_value(&hazard, axis)
-            );
         }
+        // How many axes actually left where this restart began is the direct
+        // read on whether the search is stalling rather than converging.
+        let start = restart_hazard(restart);
+        let moved = (0..AXES.len())
+            .filter(|&axis| axis_value(&local, axis) != axis_value(&start, axis))
+            .count();
+        let marker = if local_loss < best_loss {
+            "  <- best"
+        } else {
+            ""
+        };
+        eprintln!(
+            "restart {restart}: loss {entry_loss:.4} -> {local_loss:.4}, {moved}/{} axes moved{marker}",
+            AXES.len(),
+        );
+        if local_loss < best_loss {
+            best_loss = local_loss;
+            hazard = local;
+        }
+    }
+    for (axis, (name, _, _)) in AXES.iter().enumerate() {
+        eprintln!("fitted {name}: {:.4}", axis_value(&hazard, axis));
     }
 
     // Report on every fitted start, not just the search sample.
@@ -273,14 +412,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             search_starts: sample.len(),
             draws_per_start: args.draws,
             quantile_loss: Some(loss),
-            caveat: caveat(&artifact, args.through),
+            // The search configuration rides along in the free-form caveat
+            // rather than a new schema field: two fits of the same data can
+            // otherwise differ with nothing on file to say why.
+            caveat: format!(
+                "{} [objective: {}; search: {} restarts x {ROUNDS} rounds x {GRID_POINTS} points/axis]",
+                caveat(&artifact, args.through),
+                args.objective.label(),
+                args.restarts
+            ),
             buckets: buckets.clone(),
         },
     };
     std::fs::write(&args.out, params.to_json_pretty()?)?;
 
     println!("hazard: {:?}", params.hazard);
-    println!("weighted quantile loss: {loss:.4}");
+    // Both objectives are reported whichever one was minimised: the pair is the
+    // whole point, since a hazard can buy one at the other's expense.
+    println!("weighted quantile loss (workload): {loss:.4}");
+    println!(
+        "pooled ladder Brier, in-sample (forecast): {:.5}",
+        forecast_brier(&hazard, &full, args.draws)
+    );
     println!(
         "\n{:<14} {:>6} {:>9} | {:>13} | {:>13}",
         "bucket", "starts", "pred BF", "observed BF", "simulated BF"
@@ -328,6 +481,64 @@ fn caveat(artifact: &ModelArtifact, through: Option<NaiveDate>) -> String {
             "hazard fitted against predictions from {id}, which was trained through {cutoff}; \
              predictions on earlier starts are in-sample"
         ),
+    }
+}
+
+/// Pooled Brier over the survival ladder, on the starts the fit is allowed to
+/// see.
+///
+/// This is deliberately the same statistic `backtest_sim` reports, computed on a
+/// different window: the fit only ever receives starts before `--through`, so
+/// optimising it here leaves the test window untouched. Using a different metric
+/// for fitting than for judging would just add a second proxy gap on top of the
+/// one this exists to remove.
+fn forecast_brier(hazard: &pns_core::sim::RemovalHazard, starts: &[&Fitted], draws: usize) -> f64 {
+    let params = SimParams {
+        hazard: *hazard,
+        ..SimParams::defaults()
+    };
+    let mut total = 0.0;
+    let mut legs = 0usize;
+    for start in starts {
+        let pmf = simulate_start(&start.inputs, &params, draws, start.seed);
+        for threshold in RUNGS {
+            let survival: f64 = pmf
+                .iter()
+                .skip(threshold as usize)
+                .sum::<f64>()
+                .clamp(0.0, 1.0);
+            let outcome = f64::from(u8::from(start.observed_strikeouts >= threshold));
+            // Monte Carlo debias. A survival read off `draws` samples carries
+            // variance p(1-p)/draws, and squaring it adds exactly that much to
+            // the Brier — an inflation that grows with how *spread out* the
+            // simulated distribution is. Left uncorrected the search would
+            // prefer overconfident hazards for a purely numerical reason, which
+            // is the opposite of what this project needs. Subtracting the
+            // sample variance estimate removes it, and makes this loss
+            // comparable to the 10,000-draw figure `backtest_sim` reports.
+            let variance = if draws > 1 {
+                survival * (1.0 - survival) / (draws as f64 - 1.0)
+            } else {
+                0.0
+            };
+            total += (survival - outcome).powi(2) - variance;
+            legs += 1;
+        }
+    }
+    total / legs.max(1) as f64
+}
+
+/// The quantity the search minimises, dispatched on the chosen objective.
+fn search_loss(
+    objective: Objective,
+    hazard: &pns_core::sim::RemovalHazard,
+    starts: &[&Fitted],
+    observed: &[[f64; QUANTILE_COUNT]],
+    draws: usize,
+) -> f64 {
+    match objective {
+        Objective::Workload => evaluate(hazard, starts, observed, draws).0,
+        Objective::Forecast => forecast_brier(hazard, starts, draws),
     }
 }
 
@@ -573,6 +784,8 @@ fn parse_args(
         seed: 20_260_730,
         model: default_model,
         out: default_out,
+        restarts: DEFAULT_RESTARTS,
+        objective: Objective::Workload,
     };
     let mut raw = std::env::args().skip(1);
     while let Some(argument) = raw.next() {
@@ -592,6 +805,8 @@ fn parse_args(
             "--seed" => args.seed = value()?.parse()?,
             "--model" => args.model = PathBuf::from(value()?),
             "--out" => args.out = PathBuf::from(value()?),
+            "--restarts" => args.restarts = value()?.parse()?,
+            "--objective" => args.objective = Objective::parse(&value()?)?,
             other => return Err(format!("unknown argument {other}").into()),
         }
     }

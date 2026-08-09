@@ -1,3 +1,263 @@
+# Does swinging-strike rate add signal the model is missing?
+
+## Goal
+
+The model predicts strikeouts from *past strikeouts*. Swinging-strike rate
+stabilises faster and is the better-known leading indicator, and the model has
+never seen it. Decide whether it earns a feature-contract bump, a schema version
+and a retrain — **before** paying for any of that.
+
+## What the existing Savant call could not give us
+
+`savant_fastball_velocity` (`data/mod.rs:218`) passes `hfPT=FF|SI|`, so it only
+ever sees fastballs and sinkers, and `normalize_savant_velocity` keeps three
+columns. A swinging-strike *rate* needs every pitch in the denominator, so this
+needed a widened request, not just extra parsing. (An earlier note in project
+memory claimed the data was already being downloaded and discarded — it was not.)
+
+## Implementation
+
+- [x] `savant_pitch_outcomes` (`data/mod.rs`): same endpoint, no `hfPT` filter,
+      cached 30 days since completed pitch history never changes.
+- [x] `PitchOutcomes` + `normalize_savant_pitch_outcomes` (`data/enrich.rs`):
+      per-date counts of pitches, swinging strikes and called strikes. Stored as
+      **counts, not rates**, so a rolling window sums whole starts and divides
+      once — averaging per-start rates would weigh a 10-pitch start like a
+      100-pitch one. `foul_tip`, `bunt_foul_tip` and `missed_bunt` count as
+      whiffs (the batter swung and missed); ordinary `foul` does not. That is the
+      contestable line, so it is written down.
+- [x] `examples/fetch_pitch_outcomes.rs`: writes the compact
+      `data/processed/pitch_outcomes.csv`, refuses to write a partial download,
+      and never touches `training_starts*.csv`.
+- [x] `model/whiff.rs`: fits the **real** k-rate estimator twice on identical
+      rows differing only in feature width. Lives as a child of `model` so it can
+      reuse `fit_target_nig`, the real standardizer and `predict` without
+      widening any visibility — a study that re-implemented the regression would
+      be measuring its own arithmetic.
+- [x] Scoring uses the **exact Student-t predictive density** (the NIG predictive
+      is t with `2 * noise_shape` df, and `predict` returns its scale), not a
+      Gaussian approximation that would flatter whichever arm is more confident.
+- [x] Held-out gain carries a bootstrap interval **clustered by pitcher**, since
+      a pitcher's starts share whatever the features get wrong about him.
+
+## Verification
+
+- [x] Parser test pins every `description` value to its bucket and the
+      denominator to all pitches.
+- [x] Positive control: a genuinely predictive synthetic feature is detected
+      (z > 2, held-out likelihood up). Negative control: pure noise is not.
+      Without both, a null result elsewhere would mean nothing.
+- [x] Mismatched arms are refused rather than silently compared.
+- [x] League SwStr came out **0.1183** — the real MLB figure, an independent
+      check that the buckets are right.
+
+## Review — first pass: right direction, underpowered
+
+Fetched 2025-03 onward for the 191 pitchers in the evaluation window, which
+dropped **9,873 of 15,187 feature rows** for thin history, leaving 3,606 fit and
+1,708 eval rows.
+
+| | mean log-lik | MAE | RMSE |
+|---|---|---|---|
+| baseline | 0.89667 | 0.078514 | 0.098687 |
+| + whiff | 0.89897 | 0.078617 | 0.098465 |
+| difference | **+0.00230** | +0.000102 | |
+
+95% CI on the gain, clustered by pitcher: **[-0.00178, +0.00616]** — includes
+zero.
+
+Both coefficients came out separated from zero, and notably **CSW% carries more
+signal per standard deviation (0.0109, z = 3.78) than the model's own
+`recent_k_rate` feature (0.0084)**; SwStr% is 0.0086, z = 2.94.
+
+So: the pre-registered bar (likelihood up, a coefficient separated) is cleared,
+but the interval — added afterwards, and only ever making the bar harder —
+includes zero. **The direction is right; the size is not established.** This is
+not a negative result, it is a test too small to answer the question, and the
+reason is known: only 1.4 seasons of pitch data for 191 of 430 pitchers.
+
+## Follow-up in progress
+
+Full history (2023-03 onward, all 430 pitchers) is being fetched, then the study
+re-runs at two splits. More data mostly grows the *training* set — the evaluation
+window is fixed — so a second split is added purely for power: fit <= 2024,
+evaluate 2025-2026, giving ~7,000 eval rows over ~400 pitchers instead of 1,708
+over 191. **That high-power split is named primary before either result exists.**
+
+# The model leads the Kalshi price, by about a tenth of what it would need
+
+## Goal
+
+Every earlier comparison asked whether a forecaster beats the price just before
+first pitch. Model and simulator both lost, with confidence. Ask the weaker
+question instead: when a forecast disagrees with an *early* price, does the price
+later move toward it? That is closing-line value, and a lead over a
+well-calibrated close converts to expected value at settlement — so it is worth
+money even when beating that close is not.
+
+## Why it was possible at all
+
+`backtest_market` requests candles over `SNAPSHOT_LOOKBACK_HOURS = 24` and uses
+only the last one before first pitch, so the **entire pre-game price path was
+already sitting in the cache unused** — median 16 hourly candles over 18 hours.
+Kalshi's ~2-month retention has since erased that window from the API, so this
+study was only possible because the cache had been backed up first, and it
+cannot be redone.
+
+`candlesticks` keys its cache on `(ticker, start_ts, end_ts)`, so `clv_study`
+must request byte-identically the window `backtest_market` did. Both constants
+are duplicated in the example with that warning attached.
+
+## Implementation
+
+- [x] `src/clv.rs`: drift slope (OLS of `close - anchor` on `forecast - anchor`,
+      no intercept), directional hit rate over legs disagreeing by >= 5pp, and
+      fee-aware settlement P&L that **crosses the spread** — ask for YES,
+      `100 - bid` for NO — reusing `paper::kalshi_fee_cents`. One bootstrap
+      serves all three, clustered by pitcher-start.
+- [x] `examples/clv_study.rs`: prices six anchors from the cached path, reusing
+      `backtest::replay`, the settled-market join, the quote-sanity filter and
+      the settlement-agreement gate from `backtest_market`.
+- [x] Primary anchors fixed in advance — T-6h for the model, T-3h for the sim.
+      Six anchors times two forecasters is twelve chances to find something.
+- [x] The sim is scored only at T-3h and later, since it needs a confirmed
+      lineup. Lineup posting times are recorded nowhere, so 3h is a stated
+      assumption, not a measurement.
+
+## Verification
+
+- [x] 8,284 legs across 1,164 starts, **100.000% settlement agreement**.
+- [x] Coverage reported per anchor; drops attributed by reason (7 no candles,
+      13 no close quote, 0 settlement mismatches).
+- [x] Unit tests pin the slope: 1.0 when the close lands on the forecast, 0.0
+      when the price never moves, negative when it moves away.
+- [x] `cargo test --workspace` (119), strict clippy, `pnpm check`.
+
+## Review — a real lead, an order of magnitude too small
+
+| anchor | legs | drift slope (95% CI) | hit rate | P&L/contract |
+|---|---|---|---|---|
+| T-23h | 443 | +0.075 [-0.067, +0.180] | 55.6% | -2.81c |
+| T-18h | 4,007 | **+0.076 [+0.048, +0.104]** | 57.9% | -3.11c |
+| T-12h | 7,219 | **+0.059 [+0.040, +0.078]** | 56.3% | -3.13c |
+| **T-6h \*** | 7,982 | **+0.021 [+0.007, +0.034]** | 53.2% | **-3.38c [-5.69, -1.12]** |
+| T-3h | 8,165 | +0.009 [-0.001, +0.020] | 52.7% | -2.77c |
+| T-1h | 8,261 | +0.003 [-0.001, +0.007] | 50.5% | -3.34c |
+
+The lead is real: at the pre-registered anchor the slope's interval excludes
+zero. More convincing than any single number, **the slope decays monotonically
+toward first pitch** and the hit rate decays with it to 50.5% in the final hour.
+That is information being absorbed, not a shape noise produces.
+
+It is also hopeless economically. Slope 0.021 against a mean disagreement of
+6.4pp is ~0.13c of expected movement, against 1.5-3c of spread plus a 2c fee.
+Even at 18h, where the lead is strongest, it is ~0.48c against 3-4c of cost.
+Realised P&L is negative at every anchor and significantly so at the primary one.
+**Pre-registered bar required slope above zero AND positive P&L; the first half
+passes, the second fails.**
+
+**The simulator leads about 3x harder than the model** at the same anchor
+(+0.028 [+0.017, +0.038] vs +0.009, hit rate 57.6% vs 53.2%). That is the
+clearest evidence yet that lineup information is genuinely underpriced in these
+thin books — consistent with the sim's only previously measured advantage. Its
+P&L interval straddles zero rather than sitting below it, which is *not*
+permission to reach for maker fills: the bar said positive, and it is not.
+
+Caveats worth keeping: markets quoted 24h out are the liquid ones, so early
+anchors are a selected subset (443 legs at 23h against 8,261 at 1h); and the
+close is the best available estimate of truth, not truth.
+
+# The removal hazard is not where the simulator's remaining error lives
+
+## Goal
+
+Close some of the simulator's 0.00550 pooled-Brier gap to the Kalshi market by
+fixing the removal-hazard fit, which the build notes flagged as having stalled.
+
+## What was actually wrong
+
+The stall was real and worse than recorded. The *shipped* live fit
+(`pns-sim-params-v1.json`) moved all four axes, but the **historical** fit the
+backtest depends on (`pns-sim-params-hist-2026-04-30.json`) left `intercept`,
+`traffic_slope` and `pivot_scale` at **exactly** their defaults, moving only
+`pa_slope`. Coordinate descent accepts a move only when one axis improves the
+loss alone, so it halts on any diagonal ridge.
+
+## Implementation
+
+- [x] Deterministic multi-start added to `examples/fit_sim_params.rs`: restart
+      positions come from a Halton sequence over the existing axis bounds
+      (coprime bases 2/3/5/7), so restarts spread without an RNG and reproduce
+      exactly. `--restarts N`.
+- [x] Second objective added, `--objective forecast`: pooled survival-ladder
+      Brier over `backtest::RUNGS`, scored on the fit window only. The original
+      quantile objective stays as `--objective workload` (default).
+- [x] Monte Carlo debias in the forecast objective. A survival read off `draws`
+      samples carries variance `p(1-p)/draws`, and squaring inflates Brier by
+      exactly that — an inflation that grows with how dispersed the simulated
+      distribution is, so an uncorrected search would prefer overconfident
+      hazards for a purely numerical reason. Subtracting the sample-variance
+      estimate removes it.
+- [x] Both losses are reported whichever was minimised, since a hazard can buy
+      one at the other's expense.
+- [x] `--restarts` defaults to **0**, reproducing the shipped artifact. See
+      Review for why the better search is opt-in.
+
+## Verification
+
+- [x] Baseline backtest reproduced the 2026-07-30 run exactly (pooled Brier
+      0.11333, advantage -0.00130, CI [-0.00223, -0.00034]), which validates
+      every comparison below.
+- [x] Two runs of the same fit produce byte-identical artifacts.
+- [x] `cargo test --workspace`, strict clippy, `pnpm check`, `pnpm test`,
+      `pnpm build`.
+
+## Review — negative result, deliberately not shipped
+
+The search improvement works. On the workload objective multi-start reached a
+quantile loss of **0.80** where the single start stalled at **1.80**, confirmed
+on all 13,441 fitted starts rather than the 4,481-start search sample, with no
+parameter pinned to a boundary.
+
+It did not help, and that is the finding:
+
+| hazard | workload loss | backtest Brier | ECE | advantage vs model |
+|---|---|---|---|---|
+| shipped | 1.80 | 0.11333 | 0.00987 | -0.00130 |
+| workload-optimised | **0.80** | 0.11338 | 0.01025 | -0.00124 |
+| forecast-optimised | 5.00 | **0.11325** | **0.00813** | **-0.00138** |
+
+Fitting the workload proxy 2.25x better made out-of-sample forecasting slightly
+*worse* on all four metrics. Fitting forecast quality directly improved Brier by
+0.00008 — around 1.5% of the gap to the market, against a pre-registered bar of
+"meaningfully below +0.00550". **Bar not cleared; shipped params unchanged.**
+
+The two objectives are in direct conflict: they move `traffic_slope` in opposite
+directions (0.45 -> 0.2375 workload, 0.45 -> 0.9350 forecast), and the forecast
+optimum reproduces batters-faced **six times worse** than the workload optimum.
+Lowering `traffic_slope` keeps struggling pitchers in longer, which flatters the
+workload fit but manufactures strikeouts — the non-strikeout outcome alphabet is
+league-average for everyone, so it has no notion of a pitcher being hit hard.
+
+One sub-result is worth keeping: the forecast fit essentially removes the sim's
+known high-rung under-prediction (rung 9 error -0.0197 -> +0.0008, the exact
+defect the market benchmark flagged) and improves ECE 18%, at the cost of new
+over-prediction at rungs 10-12. It was still not shipped, because the bar was set
+on Brier in advance and rewriting it afterwards is the failure mode that produced
+the quarter-Kelly and 12+pp reversals.
+
+**Conclusion for the next pass: two opposite hazard fits move Brier by less than
+0.0002 while workload calibration swings by 6x. The hazard is not the binding
+constraint — the remaining error almost certainly sits in the per-batter rate
+model, which none of this touches.** The rung 10-12 over-prediction suggests the
+forecast fit is partly compensating for a rate-side bias, which is a reason to
+fix the rate side before revisiting the hook.
+
+Caveat on method: the held-out window was scored three times (baseline, workload,
+forecast). All three are reported above rather than only the winner, but the
+independence of that window is partly spent and further hazard tuning against it
+should be avoided.
+
 # Paper trading against Kalshi strikeout markets
 
 ## Goal

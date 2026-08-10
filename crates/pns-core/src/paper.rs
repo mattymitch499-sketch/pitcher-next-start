@@ -442,10 +442,7 @@ pub fn summarize(entries: &[PaperEntry]) -> PaperSummary {
     // Scratched/voided markets never resolved, so they carry no P&L or
     // calibration signal — excluded from every stat below.
     let active: Vec<&PaperEntry> = entries.iter().filter(|entry| !entry.voided).collect();
-    let bets: Vec<_> = active
-        .iter()
-        .filter(|entry| entry.side.is_some())
-        .collect();
+    let bets: Vec<_> = active.iter().filter(|entry| entry.side.is_some()).collect();
     let graded_bets: Vec<_> = bets
         .iter()
         .filter(|entry| entry.profit_cents.is_some())
@@ -549,7 +546,8 @@ pub fn grade_log(root: impl AsRef<Path>) -> Result<Vec<PaperEntry>> {
     }
     let client = crate::data::MlbStatsClient::new()?;
     let mut actuals: BTreeMap<(u32, String), f64> = BTreeMap::new();
-    let mut scratched: std::collections::BTreeSet<(u32, String)> = std::collections::BTreeSet::new();
+    let mut scratched: std::collections::BTreeSet<(u32, String)> =
+        std::collections::BTreeSet::new();
     for (pitcher_id, event_date) in pending {
         let Ok(date) = NaiveDate::parse_from_str(&event_date, "%Y-%m-%d") else {
             continue;
@@ -566,7 +564,9 @@ pub fn grade_log(root: impl AsRef<Path>) -> Result<Vec<PaperEntry>> {
             lookup_date = reschedule;
         }
         if let Ok(starts) = client.pitcher_starts_range(pitcher_id, lookup_date, lookup_date)
-            && let Some(start) = starts.into_iter().find(|start| start.game_date == lookup_date)
+            && let Some(start) = starts
+                .into_iter()
+                .find(|start| start.game_date == lookup_date)
         {
             actuals.insert((pitcher_id, event_date), start.strikeouts as f64);
         } else if today.signed_duration_since(date).num_days() >= SCRATCH_GRACE_DAYS {
@@ -701,14 +701,20 @@ mod tests {
 
         assert_eq!(without.len(), 1);
         assert_eq!(with.len(), 1);
-        assert_eq!(without[0].side, with[0].side, "sim must not change the side");
+        assert_eq!(
+            without[0].side, with[0].side,
+            "sim must not change the side"
+        );
         assert_eq!(without[0].entry_price_cents, with[0].entry_price_cents);
         assert_eq!(without[0].edge, with[0].edge);
         assert_eq!(without[0].model_probability, with[0].model_probability);
 
         assert_eq!(without[0].sim_probability, None);
         let sim_probability = with[0].sim_probability.unwrap();
-        assert!((sim_probability - 0.7).abs() < 1e-12, "P(K >= 6) of the PMF");
+        assert!(
+            (sim_probability - 0.7).abs() < 1e-12,
+            "P(K >= 6) of the PMF"
+        );
         let sim_mean = with[0].sim_expected_strikeouts.unwrap();
         assert!((sim_mean - (0.3 * 2.0 + 0.7 * 6.0)).abs() < 1e-12);
     }
@@ -788,20 +794,44 @@ mod tests {
     /// one number is what made the log overstate performance in the first place.
     #[test]
     fn summarize_separates_gross_fees_and_net() {
-        let cards = crate::score_date_fixture("2026-07-21").unwrap();
-        let model = crate::ModelInfo {
-            artifact_id: "test-artifact".into(),
-            schema_version: 2,
-            trained_through: chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap(),
-            training_rows: 100,
+        // Entries are built directly rather than through `match_markets`: this
+        // test is about summarize's arithmetic, and routing it through the model
+        // made it depend on the model happening to find an edge on a fixture —
+        // which broke the moment the feature set changed.
+        let entry = |ticker: &str,
+                     threshold: u16,
+                     probability: f64,
+                     side: Option<super::Side>,
+                     price: Option<u16>| super::PaperEntry {
+            market_ticker: ticker.into(),
+            event_date: "2026-07-21".into(),
+            pitcher_id: 1,
+            pitcher_name: "Fixture Ace".into(),
+            threshold,
+            model_probability: probability,
+            yes_bid: Some(40),
+            yes_ask: Some(45),
+            side,
+            entry_price_cents: price,
+            edge: side.map(|_| 0.17),
+            recorded_at: "now".into(),
+            actual_strikeouts: None,
+            result_yes: None,
+            profit_cents: None,
+            voided: false,
+            model_expected_strikeouts: Some(6.0),
+            model_sd_strikeouts: Some(2.0),
+            model_artifact_id: "test-artifact".into(),
+            sim_probability: None,
+            sim_expected_strikeouts: None,
+            fee_cents: None,
+            liquidity: side.map(|_| super::Liquidity::Taker),
         };
-        let markets = vec![market(
-            "KXMLBKS-26JUL211910AAABBB-AAAFACE1-6",
-            "Fixture Ace: 6+",
-            Some(40),
-            Some(45),
-        )];
-        let mut entries = super::match_markets(&cards, &markets, &model, "now", 0.05);
+        let mut entries = vec![
+            entry("T-6", 6, 0.62, Some(super::Side::Yes), Some(45)),
+            // Logged but never traded: counts for calibration, owes no fee.
+            entry("T-9", 9, 0.11, None, None),
+        ];
         for entry in &mut entries {
             super::apply_result(entry, 7.0);
         }

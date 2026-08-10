@@ -1,0 +1,150 @@
+{
+  "provenance": {
+    "model_artifact_id": "pns-blr-v3-2026-04-30-dfc7303b2b73",
+    "model_trained_through": "2026-04-30",
+    "model_training_rows": 13441,
+    "sim_params_fit_through": "2026-05-01",
+    "sim_params_model_artifact_id": "pns-blr-v3-2026-04-30-dfc7303b2b73",
+    "sim_params_caveat": "hazard fitted on starts before 2026-05-01 against predictions from pns-blr-v3-2026-04-30-dfc7303b2b73, trained through 2026-04-30; those predictions are in-sample, but neither the artifact nor the hazard saw any start after 2026-04-30, so a test window opening on 2026-05-01 is clean [objective: workload; search: 0 restarts x 3 rounds x 7 points/axis]",
+    "dataset": "data/processed/training_starts_v4.csv",
+    "batter_lines": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/batter_lines.csv",
+    "window_from": "2026-05-01",
+    "window_through": "2026-07-16",
+    "draws_per_start": 10000,
+    "generated_at": "2026-08-09T17:29:48.137109900+00:00"
+  },
+  "population": {
+    "starts_in_window": 1796,
+    "starts_replayed": 1694,
+    "starts_skipped": 102,
+    "skipped_short_history": 102,
+    "skipped_unknown_hand": 0,
+    "skipped_ambiguous_date": 0,
+    "starts_with_known_lineup": 1694,
+    "mean_actual_strikeouts": 5.007083825265643,
+    "mean_model_expected_strikeouts": 5.096899060144978,
+    "mean_sim_expected_strikeouts": 4.925064935064931
+  },
+  "evaluation": {
+    "starts": 1694,
+    "legs": 18634,
+    "rungs": [
+      {
+        "threshold": 2,
+        "starts": 1694,
+        "model_probability": 0.9495012247443778,
+        "sim_probability": 0.9456088547815815,
+        "observed_rate": 0.935655253837072,
+        "model_brier": 0.057212950067444056,
+        "sim_brier": 0.056367985348287956
+      },
+      {
+        "threshold": 3,
+        "starts": 1694,
+        "model_probability": 0.8612362984197306,
+        "sim_probability": 0.8505518299881928,
+        "observed_rate": 0.8417945690672963,
+        "model_brier": 0.12686421829516087,
+        "sim_brier": 0.12557572560802838
+      },
+      {
+        "threshold": 4,
+        "starts": 1694,
+        "model_probability": 0.7261740029635582,
+        "sim_probability": 0.7065273907910267,
+        "observed_rate": 0.7113341204250295,
+        "model_brier": 0.19201435044967843,
+        "sim_brier": 0.18874873037780424
+      },
+      {
+        "threshold": 5,
+        "starts": 1694,
+        "model_probability": 0.5642091029555043,
+        "sim_probability": 0.5372580283353019,
+        "observed_rate": 0.5537190082644629,
+        "model_brier": 0.22762737759954596,
+        "sim_brier": 0.2245483451889019
+      },
+      {
+        "threshold": 6,
+        "starts": 1694,
+        "model_probability": 0.4029446024177489,
+        "sim_probability": 0.3735731404958679,
+        "observed_rate": 0.3919716646989374,
+        "model_brier": 0.21571847439423178,
+        "sim_brier": 0.21372653053719
+      },
+      {
+        "threshold": 7,
+        "starts": 1694,
+        "model_probability": 0.264813132210943,
+        "sim_probability": 0.23799645808736705,
+        "observed_rate": 0.25914994096812277,
+        "model_brier": 0.1728206380729747,
+        "sim_brier": 0.17137197433293985
+      },
+      {
+        "threshold": 8,
+        "starts": 1694,
+        "model_probability": 0.1605896843343477,
+        "sim_probability": 0.13957077922077915,
+        "observed_rate": 0.15348288075560804,
+        "model_brier": 0.11909048244147266,
+        "sim_brier": 0.1183609739610388
+      },
+      {
+        "threshold": 9,
+        "starts": 1694,
+        "model_probability": 0.09015463735457735,
+        "sim_probability": 0.0756445100354192,
+        "observed_rate": 0.09563164108618655,
+        "model_brier": 0.08149938521540667,
+        "sim_brier": 0.08137733896103905
+      },
+      {
+        "threshold": 10,
+        "starts": 1694,
+        "model_probability": 0.04700101266139205,
+        "sim_probability": 0.03806534828807552,
+        "observed_rate": 0.0448642266824085,
+        "model_brier": 0.040544362536228395,
+        "sim_brier": 0.04025197716056666
+      },
+      {
+        "threshold": 11,
+        "starts": 1694,
+        "model_probability": 0.022816403001071944,
+        "sim_probability": 0.0178643447461629,
+        "observed_rate": 0.01770956316410862,
+        "model_brier": 0.016877413266505877,
+        "sim_brier": 0.016878163270366033
+      },
+      {
+        "threshold": 12,
+        "starts": 1694,
+        "model_probability": 0.01033551153124291,
+        "sim_probability": 0.007872018890200698,
+        "observed_rate": 0.007674144037780401,
+        "model_brier": 0.007535044167551998,
+        "sim_brier": 0.007500352632821725
+      }
+    ],
+    "model": {
+      "pooled_brier": 0.11434588150056323,
+      "rung_log_loss": 0.36039484141303396,
+      "ece": 0.008167352787843267,
+      "exact_log_score": -2.228484409162103
+    },
+    "sim": {
+      "pooled_brier": 0.11315528157990869,
+      "rung_log_loss": 0.3561795365733266,
+      "ece": 0.010491338413652357,
+      "exact_log_score": -2.2182280829649392
+    },
+    "brier_difference": {
+      "point": -0.0011905999206560187,
+      "low": -0.002142191517004171,
+      "high": -0.00023104861522352916
+    }
+  }
+}

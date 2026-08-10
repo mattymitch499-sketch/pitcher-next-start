@@ -283,6 +283,9 @@ mod tests {
             historical_opponent_offense: None,
             pitch_hand: None,
             opponent_batters: Vec::new(),
+            pitches: None,
+            swinging_strikes: None,
+            called_strikes: None,
         }
     }
 

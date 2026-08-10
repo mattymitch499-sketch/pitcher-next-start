@@ -8,7 +8,7 @@ use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-pub const MODEL_ARTIFACT_SCHEMA_VERSION: u32 = 2;
+pub const MODEL_ARTIFACT_SCHEMA_VERSION: u32 = 3;
 pub const DEFAULT_HISTORY_WINDOW: usize = 5;
 static TEMPORARY_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -114,8 +114,13 @@ impl ModelArtifact {
         ))?;
         let digest = Sha256::digest(payload);
         let digest_hex = format!("{digest:x}");
+        // The schema version rides in the prefix as well as the digest. The
+        // digest alone already separates artifacts, but `model_artifact_id` is
+        // stamped on every paper-trade row and read by humans, so a schema-3
+        // artifact labelled v2 would make the log's own history unreadable.
         Ok(format!(
-            "pns-blr-v2-{}-{}",
+            "pns-blr-v{}-{}-{}",
+            MODEL_ARTIFACT_SCHEMA_VERSION,
             self.training.data_through,
             &digest_hex[..12]
         ))

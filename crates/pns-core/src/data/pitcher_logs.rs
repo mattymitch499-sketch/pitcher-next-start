@@ -120,6 +120,11 @@ pub fn normalize_game_log(json: &str) -> Result<Vec<PitcherStartLog>> {
             historical_opponent_offense: None,
             pitch_hand: None,
             opponent_batters: Vec::new(),
+            // MLB's game log carries no pitch-outcome detail; these are joined
+            // from Savant afterwards, the same way `avg_fb_velo` is.
+            pitches: None,
+            swinging_strikes: None,
+            called_strikes: None,
         });
     }
     rows.sort_by_key(|row| (row.pitcher_id, row.game_date));

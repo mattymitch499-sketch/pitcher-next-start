@@ -92,11 +92,15 @@ fn student_t_log_density(actual: f64, location: f64, scale: f64, degrees_of_free
         - (v + 1.0) / 2.0 * (1.0 + z * z / v).ln()
 }
 
+/// One evaluation row's log density, tagged with the pitcher it belongs to so
+/// the interval can resample by pitcher rather than by row.
+type ScoredRow = (u32, f64);
+
 /// Fits `target_k_rate` on `fit` and scores it on `eval`.
 fn fit_and_score(
     fit: &[FeatureRow],
     eval: &[FeatureRow],
-) -> Result<(HeldOutFit, Posterior, Vec<(u32, f64)>)> {
+) -> Result<(HeldOutFit, Posterior, Vec<ScoredRow>)> {
     if fit.len() < 4 {
         return Err(PnsError::Model("not enough rows to fit".into()));
     }
@@ -121,7 +125,9 @@ fn fit_and_score(
         per_row.push((row.pitcher_id, density));
     }
     if per_row.is_empty() {
-        return Err(PnsError::Model("no evaluation rows carried a target".into()));
+        return Err(PnsError::Model(
+            "no evaluation rows carried a target".into(),
+        ));
     }
     let counted_f = per_row.len() as f64;
     Ok((
@@ -196,7 +202,8 @@ pub fn compare_k_rate(
             "arms scored different numbers of evaluation rows".into(),
         ));
     }
-    let mut by_pitcher: std::collections::BTreeMap<u32, Vec<f64>> = std::collections::BTreeMap::new();
+    let mut by_pitcher: std::collections::BTreeMap<u32, Vec<f64>> =
+        std::collections::BTreeMap::new();
     for ((pitcher, base), (other_pitcher, aug)) in baseline_rows.iter().zip(&augmented_rows) {
         if pitcher != other_pitcher {
             return Err(PnsError::Model(
@@ -269,7 +276,10 @@ mod tests {
         // Far out in the tail, few degrees of freedom must assign MORE density.
         let heavy = student_t_log_density(3.0, 0.0, 1.0, 3.0);
         let light = student_t_log_density(3.0, 0.0, 1.0, 1_000_000.0);
-        assert!(heavy > light, "t should be fatter tailed: {heavy} vs {light}");
+        assert!(
+            heavy > light,
+            "t should be fatter tailed: {heavy} vs {light}"
+        );
         // With huge degrees of freedom it must converge on the normal.
         assert!(
             (light - gaussian(3.0)).abs() < 1e-4,

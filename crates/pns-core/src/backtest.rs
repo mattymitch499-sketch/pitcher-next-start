@@ -666,6 +666,12 @@ mod tests {
             historical_opponent_offense: Some(0.95 + (day % 7) as f64 * 0.02),
             pitch_hand: Some(hand(pitcher_id)),
             opponent_batters: (0..9).map(|slot| 500 + pitcher_id * 10 + slot).collect(),
+            // Deterministic, and varied enough that the whiff features are not
+            // constant across the fixture (a constant would standardize to a
+            // zero-variance column and silently drop out of the fit).
+            pitches: Some(90 + (day % 5) as u32 * 4),
+            swinging_strikes: Some(9 + (day % 3) as u32),
+            called_strikes: Some(16 + (day % 4) as u32),
         }
     }
 

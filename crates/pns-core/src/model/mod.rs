@@ -453,10 +453,11 @@ fn standardize_rows(rows: &[FeatureRow]) -> Result<(Vec<FeatureRow>, Vec<f64>, V
     let mut means = vec![0.0; width];
     let mut scales = vec![1.0; width];
     for feature in 1..width {
+        let sentinel = crate::features::SENTINEL_FEATURE_INDICES.contains(&feature);
         let observed: Vec<_> = rows
             .iter()
             .map(|row| row.values[feature])
-            .filter(|value| feature != 7 || *value > 0.0)
+            .filter(|value| !sentinel || *value > 0.0)
             .collect();
         if observed.is_empty() {
             continue;
@@ -497,7 +498,9 @@ fn standardize_values(values: &[f64], means: &[f64], scales: &[f64]) -> Result<V
         .map(|(index, value)| {
             if index == 0 {
                 *value
-            } else if index == 7 && *value <= 0.0 {
+            } else if crate::features::SENTINEL_FEATURE_INDICES.contains(&index) && *value <= 0.0 {
+                // Missing, not zero. Standardized to the mean so the feature
+                // contributes nothing rather than a confident wrong answer.
                 0.0
             } else {
                 (*value - means[index]) / scales[index]

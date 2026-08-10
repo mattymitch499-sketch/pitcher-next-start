@@ -159,12 +159,19 @@ pub fn score_date_detailed(date: &str) -> Result<ScoredSlate> {
                 let client = client.clone();
                 scope.spawn(move || {
                     let mut rows = client.pitcher_starts(context.pitcher_id, target_date)?;
-                    if let Ok(velocities) = client.savant_fastball_velocity(
-                        context.pitcher_id,
-                        target_date - chrono::Duration::days(400),
-                        target_date - chrono::Duration::days(1),
-                    ) {
+                    let from = target_date - chrono::Duration::days(400);
+                    let to = target_date - chrono::Duration::days(1);
+                    if let Ok(velocities) =
+                        client.savant_fastball_velocity(context.pitcher_id, from, to)
+                    {
                         data::enrich::join_velocity(&mut rows, context.pitcher_id, &velocities);
+                    }
+                    // Both Savant calls degrade the same way: a failure costs the
+                    // feature, not the slate. The feature builder falls back to
+                    // its missing-data sentinel, which standardizes to the mean.
+                    if let Ok(outcomes) = client.savant_pitch_outcomes(context.pitcher_id, from, to)
+                    {
+                        data::enrich::join_pitch_outcomes(&mut rows, context.pitcher_id, &outcomes);
                     }
                     Ok::<_, PnsError>(rows)
                 })
@@ -305,8 +312,8 @@ fn find_model_artifact() -> Option<PathBuf> {
     }
     let current = std::env::current_dir().ok()?;
     [
-        current.join("models/pns-model-v2.json"),
-        current.join("../models/pns-model-v2.json"),
+        current.join("models/pns-model-v3.json"),
+        current.join("../models/pns-model-v3.json"),
     ]
     .into_iter()
     .find(|path| path.exists())
@@ -316,7 +323,7 @@ fn load_model_artifact() -> Result<model::artifact::ModelArtifact> {
     if let Some(path) = find_model_artifact() {
         return model::artifact::ModelArtifact::load(path);
     }
-    model::artifact::ModelArtifact::from_json(include_str!("../../../models/pns-model-v2.json"))
+    model::artifact::ModelArtifact::from_json(include_str!("../../../models/pns-model-v3.json"))
 }
 
 #[cfg(test)]

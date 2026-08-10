@@ -171,11 +171,13 @@ impl MlbStatsClient {
         date: NaiveDate,
     ) -> Result<Option<NaiveDate>> {
         let response = self.request_text(
-            self.http.get(format!("{}/schedule", self.base_url)).query(&[
-                ("sportId", "1"),
-                ("date", &date.to_string()),
-                ("hydrate", "probablePitcher"),
-            ]),
+            self.http
+                .get(format!("{}/schedule", self.base_url))
+                .query(&[
+                    ("sportId", "1"),
+                    ("date", &date.to_string()),
+                    ("hydrate", "probablePitcher"),
+                ]),
             &format!("reschedule-{pitcher_id}-{date}"),
             3_600,
         )?;
@@ -342,7 +344,11 @@ impl MlbStatsClient {
 fn has_game_log_splits(text: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
-        .and_then(|value| value["stats"][0]["splits"].as_array().map(|splits| !splits.is_empty()))
+        .and_then(|value| {
+            value["stats"][0]["splits"]
+                .as_array()
+                .map(|splits| !splits.is_empty())
+        })
         .unwrap_or(false)
 }
 
@@ -381,7 +387,8 @@ mod tests {
     #[test]
     fn game_log_splits_detects_empty_vs_populated_responses() {
         let empty = r#"{"stats":[{"type":{"displayName":"gameLog"},"splits":[]}]}"#;
-        let populated = r#"{"stats":[{"type":{"displayName":"gameLog"},"splits":[{"date":"2026-07-21"}]}]}"#;
+        let populated =
+            r#"{"stats":[{"type":{"displayName":"gameLog"},"splits":[{"date":"2026-07-21"}]}]}"#;
         assert!(!super::has_game_log_splits(empty));
         assert!(super::has_game_log_splits(populated));
         assert!(!super::has_game_log_splits("not json"));

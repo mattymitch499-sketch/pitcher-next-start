@@ -1,3 +1,97 @@
+# Swinging-strike rate shipped: feature schema 2, artifact schema 3
+
+## Goal
+
+The whiff study cleared its bar on full history, so integrate the feature: new
+dataset columns, a feature-contract bump, an artifact schema bump, retrained
+artifacts, and a live path that can supply the feature daily.
+
+## Parameterisation, decided by measurement rather than assumption
+
+SwStr% and CSW% overlap by construction (CSW = called + swinging), and on the
+primary split they visibly traded credit. Three candidates on the same rows:
+
+| features | gain | 95% CI | coefficients |
+|---|---|---|---|
+| SwStr alone | +0.00235 | [+0.00111, +0.00360] | z 4.64 |
+| **SwStr + called** | **+0.00324** | **[+0.00187, +0.00466]** | z 4.96 / 1.96 |
+| SwStr + CSW | +0.00324 | [+0.00187, +0.00466] | z 3.67 / 1.96 |
+
+SwStr+called and SwStr+CSW are **numerically identical** — same gain, same
+interval to five decimals — because they span the same space. So the choice is
+purely conditioning, and the non-overlapping pair wins: cleaner coefficient on
+the primary feature, and two quantities that do not contain each other. Two
+features also genuinely beat one, so called-strike rate earns its slot.
+
+## Implementation
+
+- [x] `PitcherStartLog` gains `pitches` / `swinging_strikes` / `called_strikes`
+      as `#[serde(default)]` columns, so every pre-v4 CSV still reads.
+- [x] `examples/build_dataset_v4.rs` joins `pitch_outcomes.csv` onto v3 and
+      writes **v4**, never rewriting its input. Refuses below 90% join coverage;
+      measured **100.00%** on all 16,477 starts.
+- [x] `FEATURE_NAMES` 16 -> 18, `FEATURE_SCHEMA_VERSION` 1 -> 2,
+      `MODEL_ARTIFACT_SCHEMA_VERSION` 2 -> 3.
+- [x] `features::build` sums counts across the prior window and divides once.
+      Below 200 pitches it emits the 0.0 sentinel.
+- [x] **Generalised the standardizer's missing-data sentinel.** It hardcoded
+      `feature != 7` for fastball velocity; that is now
+      `SENTINEL_FEATURE_INDICES`, and a test pins those indices to their feature
+      *names* — reordering `FEATURE_NAMES` would otherwise leave the numbers
+      valid but pointing at the wrong columns, silently computing means over
+      sentinels with nothing failing.
+- [x] Artifact IDs now carry the schema version (`pns-blr-v3-...`), since
+      `model_artifact_id` is stamped on every paper-trade row and a schema-3
+      artifact labelled v2 would make the log's own history unreadable.
+- [x] Live path fetches `savant_pitch_outcomes` beside the velocity call, with
+      the same `if let Ok(..)` degradation — an outage costs the feature, not the
+      slate.
+
+## Verification
+
+- [x] Both artifacts retrained; live artifact **byte-identical across two runs**.
+- [x] 121 tests pass, strict clippy clean of new issues, `pnpm check` 0 errors.
+- [x] New tests: sentinel indices pinned to names; whiff rates sum counts rather
+      than averaging per-start rates (a 200-pitch and a 20-pitch start must not
+      weigh equally).
+
+## Review — it works, and it is small
+
+`backtest_sim` is the valid paired comparison: fixed 1,694 starts, fixed 11-rung
+ladder, same code both times.
+
+| | v2 / 16 features | v3 / 18 features |
+|---|---|---|
+| model pooled Brier | 0.11463 | **0.11435** |
+| model rung log loss | 0.36145 | **0.36039** |
+| model ECE | 0.00904 | **0.00817** |
+| model exact log score | -2.23071 | **-2.22848** |
+| sim pooled Brier | 0.11333 | **0.11316** |
+
+All four model measures improve; **bar cleared**. Model mean K moved from 5.110
+toward the actual 5.007, so the over-prediction shrank rather than shifted. The
+gain is 0.00028 Brier — about 5% of the gap to the market, consistent with the
+study's predicted magnitude. Real, directionally right, not a transformation.
+The sim's edge over the model narrowed (-0.00130 -> -0.00119) because the feature
+helps the model directly and the simulator inherits only part of it.
+
+## The market benchmark is not comparable across dates
+
+Ran once as planned, and the run itself produced a methodological finding:
+**matched legs moved 6,112 -> 8,284 on the same 1,115 starts**. Kalshi's settled
+market list shifts with retention, so two runs on different days score different
+leg sets and their absolute Brier values are not comparable. Treat the benchmark
+as meaningful only *within* a single run.
+
+Within today's run the ordering is unchanged and decisive: market **0.15577** <
+sim **0.16193** < model **0.16379**. The market still beats both.
+
+## Note on promotion
+
+The plan called promotion a separate decision. It is not one: bumping the
+artifact schema makes the old v2 artifact unloadable, so shipping schema 3
+necessarily ships the new artifact. `lib.rs` loads `models/pns-model-v3.json`.
+
 # Does swinging-strike rate add signal the model is missing?
 
 ## Goal
@@ -76,13 +170,34 @@ includes zero. **The direction is right; the size is not established.** This is
 not a negative result, it is a test too small to answer the question, and the
 reason is known: only 1.4 seasons of pitch data for 191 of 430 pitchers.
 
-## Follow-up in progress
+## Second pass on full history — the bar is cleared
 
-Full history (2023-03 onward, all 430 pitchers) is being fetched, then the study
-re-runs at two splits. More data mostly grows the *training* set — the evaluation
-window is fixed — so a second split is added purely for power: fit <= 2024,
-evaluate 2025-2026, giving ~7,000 eval rows over ~400 pitchers instead of 1,708
-over 191. **That high-power split is named primary before either result exists.**
+Fetched 2023-03 onward for all 430 dataset pitchers: **27,028 start-rows,
+1,707,399 pitches, league SwStr 0.1181** against 0.1183 on the first sample —
+unchanged across 2.3x the pitchers, which is the parser-regression check.
+Dropped rows fell from **9,873 to 132**.
+
+Two splits, with the high-power one named primary *before* either result existed,
+because more data mostly grows the training set while the evaluation window is
+fixed:
+
+| split | fit | eval | gain | 95% CI | verdict |
+|---|---|---|---|---|---|
+| **primary** | <= 2024 | 2025-2026, 6,960 rows | **+0.00324** | **[+0.00187, +0.00466]** | **clears** |
+| continuity | < 2026-05-01 | May-Jul 2026, 1,726 rows | +0.00267 | [-0.00017, +0.00545] | grazes zero |
+
+On the primary split held-out log-likelihood, MAE **and** RMSE all improve, and
+`recent_swinging_strike_rate` has z = 3.67. The two splits agree on the effect
+(+0.0032 vs +0.0027) and disagree only on precision — 6,960 eval rows over ~400
+pitchers resolve it, 1,726 over ~191 cannot. That is the power argument playing
+out exactly as predicted rather than a conflict between results.
+
+**Collinearity to fix before shipping.** SwStr% and CSW% overlap by construction
+(CSW = called + swinging, so it contains SwStr), and they visibly trade credit:
+primary gives SwStr z = 3.67 and CSW 1.96, continuity splits it 4.98 / 4.10.
+Shipping both would put two features in the contract fighting over one piece of
+variance. Test SwStr% + *called-strike* rate (non-overlapping) against SwStr%
+alone before fixing the feature contract, since that choice is permanent.
 
 # The model leads the Kalshi price, by about a tenth of what it would need
 

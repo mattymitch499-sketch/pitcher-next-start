@@ -36,6 +36,19 @@ pub struct PitcherStartLog {
     /// team sent nobody up", so a consumer must treat empty as unknown.
     #[serde(default, with = "batter_ids")]
     pub opponent_batters: Vec<u32>,
+    /// Pitch-outcome counts for this start, from Statcast.
+    ///
+    /// Stored as **counts, not rates**, because a rolling window has to sum
+    /// whole starts and divide once — averaging per-start rates would weigh a
+    /// 10-pitch relief-length outing like a 100-pitch start. `None` on every
+    /// pre-v4 row, which is why the features built from these carry a
+    /// missing-data sentinel rather than a silent zero.
+    #[serde(default)]
+    pub pitches: Option<u32>,
+    #[serde(default)]
+    pub swinging_strikes: Option<u32>,
+    #[serde(default)]
+    pub called_strikes: Option<u32>,
 }
 
 /// A CSV field holds one value, so the starting nine ride in a single

@@ -220,10 +220,21 @@ impl PitchOutcomes {
     }
 
     /// Called-plus-swinging strikes per pitch, the usual "CSW%".
+    ///
+    /// Note this **contains** [`Self::swinging_strike_rate`]. Using both as
+    /// model features puts two columns in the contract competing for one piece
+    /// of variance; pair the swinging rate with [`Self::called_strike_rate`]
+    /// instead when both are wanted.
     pub fn called_plus_swinging_rate(&self) -> Option<f64> {
         (self.pitches > 0).then(|| {
             f64::from(self.swinging_strikes + self.called_strikes) / f64::from(self.pitches)
         })
+    }
+
+    /// Called strikes per pitch — the half of CSW% that is *not* swings and
+    /// misses, so it can sit alongside the swinging rate without overlapping it.
+    pub fn called_strike_rate(&self) -> Option<f64> {
+        (self.pitches > 0).then(|| f64::from(self.called_strikes) / f64::from(self.pitches))
     }
 
     /// Folds another start's counts in, for rolling windows.
@@ -267,6 +278,27 @@ pub fn join_velocity(
 ) {
     for row in rows.iter_mut().filter(|row| row.pitcher_id == pitcher_id) {
         row.avg_fb_velo = velocities.get(&row.game_date).copied();
+    }
+}
+
+/// Attaches per-start pitch-outcome counts, the same shape as
+/// [`join_velocity`].
+///
+/// A date with no Savant row is left as `None` rather than zeroed: zero pitches
+/// is indistinguishable from a zero swinging-strike rate downstream, and the
+/// feature builder treats absent counts as missing while treating a real zero as
+/// a measurement.
+pub fn join_pitch_outcomes(
+    rows: &mut [PitcherStartLog],
+    pitcher_id: u32,
+    outcomes: &HashMap<NaiveDate, PitchOutcomes>,
+) {
+    for row in rows.iter_mut().filter(|row| row.pitcher_id == pitcher_id) {
+        if let Some(outcome) = outcomes.get(&row.game_date) {
+            row.pitches = Some(outcome.pitches);
+            row.swinging_strikes = Some(outcome.swinging_strikes);
+            row.called_strikes = Some(outcome.called_strikes);
+        }
     }
 }
 

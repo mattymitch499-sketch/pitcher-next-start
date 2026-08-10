@@ -35,19 +35,82 @@ const HISTORY_WINDOW: usize = 5;
 /// study is trying to detect.
 const MIN_PRIOR_PITCHES: u32 = 200;
 
-const ADDED_FEATURES: [&str; 2] = ["recent_swinging_strike_rate", "recent_called_plus_swinging_rate"];
+/// Which whiff parameterisation to test.
+///
+/// `SwstrCsw` was the first pass and is **collinear by construction**: CSW%
+/// contains SwStr%, and the two visibly trade credit between splits. The other
+/// two exist to settle what the feature contract should permanently become,
+/// since that choice is not easily reversed once an artifact schema depends on
+/// it.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Parameterisation {
+    /// SwStr% alone.
+    Swstr,
+    /// SwStr% + called-strike rate. Non-overlapping halves of CSW%.
+    SwstrCalled,
+    /// SwStr% + CSW%. Overlapping; kept so the first pass stays reproducible.
+    SwstrCsw,
+}
+
+impl Parameterisation {
+    fn parse(raw: &str) -> Result<Self, Box<dyn std::error::Error>> {
+        match raw {
+            "swstr" => Ok(Self::Swstr),
+            "swstr-called" => Ok(Self::SwstrCalled),
+            "swstr-csw" => Ok(Self::SwstrCsw),
+            other => Err(format!(
+                "--features must be swstr, swstr-called or swstr-csw, got {other}"
+            )
+            .into()),
+        }
+    }
+
+    fn names(self) -> Vec<String> {
+        match self {
+            Self::Swstr => vec!["recent_swinging_strike_rate".into()],
+            Self::SwstrCalled => vec![
+                "recent_swinging_strike_rate".into(),
+                "recent_called_strike_rate".into(),
+            ],
+            Self::SwstrCsw => vec![
+                "recent_swinging_strike_rate".into(),
+                "recent_called_plus_swinging_rate".into(),
+            ],
+        }
+    }
+
+    /// The extra feature values for one prior window, in `names()` order.
+    fn values(self, window: &PitchOutcomes) -> Option<Vec<f64>> {
+        let swinging = window.swinging_strike_rate()?;
+        Some(match self {
+            Self::Swstr => vec![swinging],
+            Self::SwstrCalled => vec![swinging, window.called_strike_rate()?],
+            Self::SwstrCsw => vec![swinging, window.called_plus_swinging_rate()?],
+        })
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Swstr => "swstr",
+            Self::SwstrCalled => "swstr-called",
+            Self::SwstrCsw => "swstr-csw",
+        }
+    }
+}
 
 struct Args {
     dataset: PathBuf,
     outcomes: PathBuf,
     split: NaiveDate,
     through: NaiveDate,
+    features: Parameterisation,
     out: PathBuf,
 }
 
 #[derive(Serialize)]
 struct Report {
     dataset: String,
+    parameterisation: String,
     split: NaiveDate,
     through: NaiveDate,
     history_window: usize,
@@ -104,7 +167,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     // Rolling whiff rates keyed the same way a FeatureRow identifies its start.
-    let rolling = rolling_rates(&starts, &by_start);
+    let rolling = rolling_rates(&starts, &by_start, args.features);
     eprintln!("{} starts have a usable prior-window rate", rolling.len());
 
     let rows = features::historical_rows(&starts, HISTORY_WINDOW)?;
@@ -117,13 +180,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if row.as_of > args.through {
             continue;
         }
-        let Some((swstr, csw)) = rolling.get(&(row.pitcher_id, row.as_of)).copied() else {
+        let Some(extra) = rolling.get(&(row.pitcher_id, row.as_of)) else {
             dropped += 1;
             continue;
         };
         let mut augmented = row.clone();
-        augmented.values.push(swstr);
-        augmented.values.push(csw);
+        augmented.values.extend(extra.iter().copied());
         if row.as_of < args.split {
             baseline_fit.push(row.clone());
             augmented_fit.push(augmented);
@@ -146,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("no evaluation rows; check --split and --through".into());
     }
 
-    let names: Vec<String> = ADDED_FEATURES.iter().map(|name| name.to_string()).collect();
+    let names = args.features.names();
     let comparison = compare_k_rate(
         &baseline_fit,
         &baseline_eval,
@@ -180,7 +242,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         (false, _) => "does not clear the pre-registered bar",
     };
 
-    println!("\nk-rate held-out comparison ({} eval rows)", comparison.baseline.rows);
+    println!(
+        "\nk-rate held-out comparison [{}] ({} eval rows)",
+        args.features.label(),
+        comparison.baseline.rows
+    );
     println!(
         "{:<12} {:>16} {:>12} {:>12}",
         "", "mean log-lik", "MAE", "RMSE"
@@ -203,9 +269,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .as_ref()
         .and_then(|interval| interval.low.zip(interval.high))
     {
-        Some((low, high)) => println!(
-            "  log-likelihood gain 95% CI (clustered by pitcher): [{low:+.5}, {high:+.5}]"
-        ),
+        Some((low, high)) => {
+            println!("  log-likelihood gain 95% CI (clustered by pitcher): [{low:+.5}, {high:+.5}]")
+        }
         None => println!("  log-likelihood gain interval: suppressed (too few pitchers)"),
     }
     println!("\nadded coefficients (standardized units)");
@@ -220,6 +286,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let report = Report {
         dataset: args.dataset.display().to_string(),
+        parameterisation: args.features.label().to_string(),
         split: args.split,
         through: args.through,
         history_window: HISTORY_WINDOW,
@@ -247,7 +314,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn rolling_rates(
     starts: &[PitcherStartLog],
     by_start: &HashMap<(u32, NaiveDate), PitchOutcomes>,
-) -> HashMap<(u32, NaiveDate), (f64, f64)> {
+    features: Parameterisation,
+) -> HashMap<(u32, NaiveDate), Vec<f64>> {
     let mut groups: BTreeMap<u32, Vec<&PitcherStartLog>> = BTreeMap::new();
     for start in starts {
         groups.entry(start.pitcher_id).or_default().push(start);
@@ -267,11 +335,8 @@ fn rolling_rates(
             if window.pitches < MIN_PRIOR_PITCHES {
                 continue;
             }
-            if let (Some(swstr), Some(csw)) = (
-                window.swinging_strike_rate(),
-                window.called_plus_swinging_rate(),
-            ) {
-                out.insert((id, group[index].game_date), (swstr, csw));
+            if let Some(values) = features.values(&window) {
+                out.insert((id, group[index].game_date), values);
             }
         }
     }
@@ -284,6 +349,7 @@ fn parse_args(root: &std::path::Path) -> Result<Args, Box<dyn std::error::Error>
         outcomes: root.join("data/processed/pitch_outcomes.csv"),
         split: NaiveDate::from_ymd_opt(2026, 5, 1).expect("valid default split"),
         through: NaiveDate::from_ymd_opt(2026, 7, 16).expect("valid default end"),
+        features: Parameterisation::SwstrCsw,
         out: root.join("outputs/whiff_signal.json"),
     };
     let mut raw = std::env::args().skip(1);
@@ -301,6 +367,7 @@ fn parse_args(root: &std::path::Path) -> Result<Args, Box<dyn std::error::Error>
         match name.as_str() {
             "--dataset" => args.dataset = PathBuf::from(value()?),
             "--outcomes" => args.outcomes = PathBuf::from(value()?),
+            "--features" => args.features = Parameterisation::parse(&value()?)?,
             "--split" => args.split = NaiveDate::parse_from_str(&value()?, "%Y-%m-%d")?,
             "--through" => args.through = NaiveDate::parse_from_str(&value()?, "%Y-%m-%d")?,
             "--out" => args.out = PathBuf::from(value()?),

@@ -1,0 +1,47 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v3.csv",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "min_prior_pitches": 200,
+  "rows_with_whiff_history": 15055,
+  "rows_dropped_for_thin_history": 132,
+  "league_swinging_strike_rate": 0.118149301949925,
+  "comparison": {
+    "fit_rows": 8095,
+    "baseline": {
+      "rows": 6960,
+      "mean_log_likelihood": 0.8802260248349709,
+      "mae": 0.07999622195524538,
+      "rmse": 0.10033787823956183
+    },
+    "augmented": {
+      "rows": 6960,
+      "mean_log_likelihood": 0.8834645193484014,
+      "mae": 0.07973683506282139,
+      "rmse": 0.10000996051708974
+    },
+    "log_likelihood_gain": 0.003238494513430501,
+    "log_likelihood_gain_interval": {
+      "point": 0.003238494513431587,
+      "low": 0.0018728540044812324,
+      "high": 0.0046604649557679175
+    },
+    "mae_change": -0.0002593868924239823,
+    "added_coefficients": [
+      {
+        "name": "recent_swinging_strike_rate",
+        "mean": 0.006875940461398174,
+        "sd": 0.0018755692633536888,
+        "z": 3.6660552056090774
+      },
+      {
+        "name": "recent_called_plus_swinging_rate",
+        "mean": 0.003723941584089799,
+        "sd": 0.001896989156382628,
+        "z": 1.9630800585022794
+      }
+    ]
+  },
+  "verdict": "CLEARS THE BAR: held-out likelihood improved, a coefficient is separated from zero, and the gain's cluster-bootstrap interval excludes zero"
+}

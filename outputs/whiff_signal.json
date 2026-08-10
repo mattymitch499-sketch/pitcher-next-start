@@ -1,0 +1,47 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v3.csv",
+  "split": "2026-05-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "min_prior_pitches": 200,
+  "rows_with_whiff_history": 15055,
+  "rows_dropped_for_thin_history": 132,
+  "league_swinging_strike_rate": 0.118149301949925,
+  "comparison": {
+    "fit_rows": 13329,
+    "baseline": {
+      "rows": 1726,
+      "mean_log_likelihood": 0.8958990708682882,
+      "mae": 0.0785917898304686,
+      "rmse": 0.09873057999839235
+    },
+    "augmented": {
+      "rows": 1726,
+      "mean_log_likelihood": 0.8985670145462004,
+      "mae": 0.07847508393390416,
+      "rmse": 0.09846539990917705
+    },
+    "log_likelihood_gain": 0.0026679436779121213,
+    "log_likelihood_gain_interval": {
+      "point": 0.0026679436779118676,
+      "low": -0.0001716125759140794,
+      "high": 0.005445072782372249
+    },
+    "mae_change": -0.00011670589656444241,
+    "added_coefficients": [
+      {
+        "name": "recent_swinging_strike_rate",
+        "mean": 0.007360206578489268,
+        "sd": 0.0014781167837882529,
+        "z": 4.979448619496666
+      },
+      {
+        "name": "recent_called_plus_swinging_rate",
+        "mean": 0.006108755735938151,
+        "sd": 0.0014913120230276662,
+        "z": 4.09622912013821
+      }
+    ]
+  },
+  "verdict": "CLEARS THE PRE-REGISTERED BAR, but the gain's interval includes zero — the direction is right and the size is not established"
+}

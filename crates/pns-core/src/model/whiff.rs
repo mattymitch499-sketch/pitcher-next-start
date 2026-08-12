@@ -97,9 +97,36 @@ fn student_t_log_density(actual: f64, location: f64, scale: f64, degrees_of_free
 type ScoredRow = (u32, f64);
 
 /// Fits `target_k_rate` on `fit` and scores it on `eval`.
-fn fit_and_score(
+/// The Normal-Inverse-Gamma priors `BayesianLinearModel::fit` uses for a target.
+///
+/// A study that supplied different ones would be measuring a different
+/// estimator than the one that ships, so these are passed explicitly rather
+/// than defaulted. See [`TargetPriors::K_RATE`] and
+/// [`TargetPriors::BATTERS_FACED`].
+#[derive(Debug, Clone, Copy)]
+pub struct TargetPriors {
+    pub intercept: f64,
+    pub noise_mean: f64,
+}
+
+impl TargetPriors {
+    /// Matches `model/mod.rs` for the k-rate regression.
+    pub const K_RATE: Self = Self {
+        intercept: 0.22,
+        noise_mean: 0.01,
+    };
+    /// Matches `model/mod.rs` for the batters-faced regression.
+    pub const BATTERS_FACED: Self = Self {
+        intercept: 24.0,
+        noise_mean: 25.0,
+    };
+}
+
+fn fit_and_score<T: Fn(&FeatureRow) -> Option<f64> + Copy>(
     fit: &[FeatureRow],
     eval: &[FeatureRow],
+    target: T,
+    priors: TargetPriors,
 ) -> Result<(HeldOutFit, Posterior, Vec<ScoredRow>)> {
     if fit.len() < 4 {
         return Err(PnsError::Model("not enough rows to fit".into()));
@@ -107,13 +134,13 @@ fn fit_and_score(
     let (standardized, means, scales) = standardize_rows(fit)?;
     // Same target, prior mean and prior noise the production fit uses, so the
     // only thing that differs between the two arms is the feature width.
-    let posterior = fit_target_nig(&standardized, |row| row.target_k_rate, 0.22, 0.01)?;
+    let posterior = fit_target_nig(&standardized, target, priors.intercept, priors.noise_mean)?;
     let degrees_of_freedom = 2.0 * posterior.noise_shape;
 
     let (mut log_likelihood, mut absolute, mut squared) = (0.0, 0.0, 0.0);
     let mut per_row = Vec::with_capacity(eval.len());
     for row in eval {
-        let Some(actual) = row.target_k_rate else {
+        let Some(actual) = target(row) else {
             continue;
         };
         let values = standardize_values(&row.values, &means, &scales)?;
@@ -160,17 +187,55 @@ fn mean_difference(clusters: &[&PitcherDifferences]) -> Option<f64> {
     (count > 0).then(|| total / count as f64)
 }
 
-/// Compares a baseline feature set against one with extra columns appended.
+/// Compares a baseline feature set against one with extra columns appended, on
+/// the **k-rate** regression.
 ///
-/// `baseline_*` and `augmented_*` must describe the **same starts in the same
-/// order**, differing only in feature width — otherwise the comparison measures
-/// a change of sample rather than a change of information.
+/// Thin wrapper over [`compare_target`] carrying the production k-rate priors.
+/// Kept so studies written against it — `whiff_signal`, `opponent_k_signal` —
+/// keep reproducing their published numbers exactly.
 pub fn compare_k_rate(
     baseline_fit: &[FeatureRow],
     baseline_eval: &[FeatureRow],
     augmented_fit: &[FeatureRow],
     augmented_eval: &[FeatureRow],
     added_names: &[String],
+) -> Result<WhiffComparison> {
+    compare_target(
+        baseline_fit,
+        baseline_eval,
+        augmented_fit,
+        augmented_eval,
+        added_names,
+        |row: &FeatureRow| row.target_k_rate,
+        TargetPriors::K_RATE,
+    )
+}
+
+/// Compares a baseline feature set against one with extra columns appended, on
+/// **any** of the model's regression targets.
+///
+/// `baseline_*` and `augmented_*` must describe the **same starts in the same
+/// order**, differing only in feature width — otherwise the comparison measures
+/// a change of sample rather than a change of information.
+///
+/// **Pick the target deliberately.** The weather study measured temperature and
+/// wind against `target_k_rate` and found nothing, which was the wrong question:
+/// the coefficient audit shows run-environment variables carry their weight on
+/// `batters_faced` (park factor is -0.00107 on k-rate and +0.16208 on workload).
+/// A feature that acts on balls in play cannot show up in a rate that counts
+/// balls never put in play.
+///
+/// `priors` must match what `BayesianLinearModel::fit` uses for the same target
+/// or the study is not measuring the production estimator — use the
+/// [`TargetPriors`] constants rather than literals.
+pub fn compare_target<T: Fn(&FeatureRow) -> Option<f64> + Copy>(
+    baseline_fit: &[FeatureRow],
+    baseline_eval: &[FeatureRow],
+    augmented_fit: &[FeatureRow],
+    augmented_eval: &[FeatureRow],
+    added_names: &[String],
+    target: T,
+    priors: TargetPriors,
 ) -> Result<WhiffComparison> {
     if baseline_fit.len() != augmented_fit.len() || baseline_eval.len() != augmented_eval.len() {
         return Err(PnsError::Model(
@@ -191,8 +256,10 @@ pub fn compare_k_rate(
         )));
     }
 
-    let (baseline, _, baseline_rows) = fit_and_score(baseline_fit, baseline_eval)?;
-    let (augmented, posterior, augmented_rows) = fit_and_score(augmented_fit, augmented_eval)?;
+    let (baseline, _, baseline_rows) =
+        fit_and_score(baseline_fit, baseline_eval, target, priors)?;
+    let (augmented, posterior, augmented_rows) =
+        fit_and_score(augmented_fit, augmented_eval, target, priors)?;
 
     // Pair the two arms row by row. They were scored on the same eval rows in
     // the same order, so a mismatch here means the arms diverged and the whole

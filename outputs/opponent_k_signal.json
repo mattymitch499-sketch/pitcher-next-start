@@ -1,0 +1,106 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "added_feature": "opponent_k_factor",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "league_k_per_batter_faced": 0.22064006690670535,
+  "factor_spread": {
+    "min": 0.7925250927039854,
+    "max": 1.228484281886949,
+    "mean": 1.0000564225186748,
+    "standard_deviation": 0.07976165129197428
+  },
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8790969295278875,
+      "mae": 0.0801042925821283,
+      "rmse": 0.10041149848231527
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8834814261279791,
+      "mae": 0.07972862559653664,
+      "rmse": 0.09999946492091892
+    },
+    "log_likelihood_gain": 0.0043844966000915475,
+    "log_likelihood_gain_interval": {
+      "point": 0.004384496600091407,
+      "low": 0.0008769852409868474,
+      "high": 0.007843626664240039
+    },
+    "mae_change": -0.00037566698559166056,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": 0.0156420497101174,
+        "sd": 0.0011482984309049004,
+        "z": 13.621937720311003
+      }
+    ]
+  },
+  "comparison_clustered_by_opponent": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8790969295278875,
+      "mae": 0.0801042925821283,
+      "rmse": 0.10041149848231527
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8834814261279791,
+      "mae": 0.07972862559653664,
+      "rmse": 0.09999946492091892
+    },
+    "log_likelihood_gain": 0.0043844966000915475,
+    "log_likelihood_gain_interval": {
+      "point": 0.004384496600091424,
+      "low": -0.002230632462787497,
+      "high": 0.012737131682589605
+    },
+    "mae_change": -0.00037566698559166056,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": 0.0156420497101174,
+        "sd": 0.0011482984309049004,
+        "z": 13.621937720311003
+      }
+    ]
+  },
+  "comparison_clustered_by_opponent_season": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8790969295278875,
+      "mae": 0.0801042925821283,
+      "rmse": 0.10041149848231527
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8834814261279791,
+      "mae": 0.07972862559653664,
+      "rmse": 0.09999946492091892
+    },
+    "log_likelihood_gain": 0.0043844966000915475,
+    "log_likelihood_gain_interval": {
+      "point": 0.004384496600091428,
+      "low": -0.002087484135033194,
+      "high": 0.011811045185281852
+    },
+    "mae_change": -0.00037566698559166056,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": 0.0156420497101174,
+        "sd": 0.0011482984309049004,
+        "z": 13.621937720311003
+      }
+    ]
+  },
+  "verdict": "CLEARS THE PRE-REGISTERED BAR, but the opponent-clustered interval includes zero — the direction is right and the size is not established"
+}

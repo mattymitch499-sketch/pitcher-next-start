@@ -1,0 +1,75 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "weather_source": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/game_weather.csv",
+  "parameterisation": "temp-wind",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "rows_dropped_without_weather": 0,
+  "indoor_share": 0.17794501426230502,
+  "mean_temperature_f": 72.81744249559993,
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8790969295278875,
+      "mae": 0.0801042925821283,
+      "rmse": 0.10041149848231527
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8788911517655702,
+      "mae": 0.08018324384789055,
+      "rmse": 0.10043646479679874
+    },
+    "log_likelihood_gain": -0.00020577776231733846,
+    "log_likelihood_gain_interval": {
+      "point": -0.00020577776231524192,
+      "low": -0.0014064556833386975,
+      "high": 0.0010976767699841523
+    },
+    "mae_change": 0.0000789512657622532,
+    "added_coefficients": [
+      {
+        "name": "game_temperature_f",
+        "mean": -0.004123353298626602,
+        "sd": 0.0011849311021133256,
+        "z": 3.4798253596961026
+      },
+      {
+        "name": "game_wind_out_component_mph",
+        "mean": -0.002150572300282777,
+        "sd": 0.0011406453027601468,
+        "z": 1.8853996900515848
+      }
+    ]
+  },
+  "intervals": [
+    {
+      "unit": "pitcher (reference, wrong unit)",
+      "clusters": 291,
+      "low": -0.0014064556833386975,
+      "high": 0.0010976767699841523
+    },
+    {
+      "unit": "park",
+      "clusters": 30,
+      "low": -0.0010460164787020605,
+      "high": 0.0006310912778582239
+    },
+    {
+      "unit": "park-season",
+      "clusters": 60,
+      "low": -0.0011741709448979314,
+      "high": 0.0008427428904913308
+    },
+    {
+      "unit": "date",
+      "clusters": 294,
+      "low": -0.0013747995535939941,
+      "high": 0.0009554779201691205
+    }
+  ],
+  "verdict": "does not clear the pre-registered bar"
+}

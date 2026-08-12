@@ -1,0 +1,70 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "weather_source": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/game_weather.csv",
+  "target": "batters_faced",
+  "parameterisation": "temp",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "rows_dropped_without_weather": 0,
+  "indoor_share": 0.17794501426230502,
+  "mean_temperature_f": 72.81744249559993,
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656121294159796,
+      "mae": 2.573000402669446,
+      "rmse": 3.4705858368275626
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.665310287018823,
+      "mae": 2.5711772543845584,
+      "rmse": 3.4694987811020237
+    },
+    "log_likelihood_gain": 0.00030184239715635997,
+    "log_likelihood_gain_interval": {
+      "point": 0.0003018423971615533,
+      "low": -0.0003603802047615274,
+      "high": 0.0009165464557922391
+    },
+    "mae_change": -0.0018231482848878322,
+    "added_coefficients": [
+      {
+        "name": "game_temperature_f",
+        "mean": -0.0879247724419316,
+        "sd": 0.042115939523028376,
+        "z": 2.0876839846789035
+      }
+    ]
+  },
+  "intervals": [
+    {
+      "unit": "pitcher (reference, wrong unit)",
+      "clusters": 291,
+      "low": -0.0003603802047615274,
+      "high": 0.0009165464557922391
+    },
+    {
+      "unit": "park",
+      "clusters": 30,
+      "low": -0.00019602233318258814,
+      "high": 0.0008086885988137979
+    },
+    {
+      "unit": "park-season",
+      "clusters": 60,
+      "low": -0.00035288230949631703,
+      "high": 0.0009262560259531235
+    },
+    {
+      "unit": "date",
+      "clusters": 294,
+      "low": -0.00029601603327051435,
+      "high": 0.0009389395591661371
+    }
+  ],
+  "verdict": "CLEARS THE PRE-REGISTERED BAR, but a correctly clustered interval includes zero — the direction is right and the size is not established"
+}

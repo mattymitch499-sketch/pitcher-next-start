@@ -8,6 +8,7 @@ pub mod lineups;
 pub mod pitcher_logs;
 pub mod schedule;
 pub mod types;
+pub mod weather;
 
 use crate::{PnsError, Result};
 use chrono::{Duration, NaiveDate};
@@ -98,6 +99,41 @@ impl MlbStatsClient {
             ttl,
         )?;
         schedule::normalize_game_index(&response)
+    }
+
+    /// Observed game-time weather across `[start, end]`, hydrated in a single
+    /// request — a whole season is a handful of calls rather than one per game.
+    ///
+    /// Kept separate from [`Self::game_index`] rather than folded into it: that
+    /// call is on the live scoring path, and widening its query would change its
+    /// cache key and re-fetch every range the cache already holds.
+    ///
+    /// **Past games only.** MLB fills this in at game time, so a future date
+    /// returns an empty object and simply yields no row.
+    pub fn schedule_weather(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<weather::GameWeather>> {
+        let today = chrono::Utc::now().date_naive();
+        let ttl = if end < today - chrono::Duration::days(2) {
+            2_592_000
+        } else {
+            3_600
+        };
+        let response = self.request_text(
+            self.http
+                .get(format!("{}/schedule", self.base_url))
+                .query(&[
+                    ("sportId", "1"),
+                    ("startDate", &start.to_string()),
+                    ("endDate", &end.to_string()),
+                    ("hydrate", "weather"),
+                ]),
+            &format!("schedule-weather-{start}-{end}"),
+            ttl,
+        )?;
+        weather::normalize_schedule_weather(&response)
     }
 
     /// Box score for a completed game. `hydrate=person` is what puts `pitchHand`

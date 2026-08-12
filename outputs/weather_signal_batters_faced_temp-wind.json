@@ -1,0 +1,76 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "weather_source": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/game_weather.csv",
+  "target": "batters_faced",
+  "parameterisation": "temp-wind",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "rows_dropped_without_weather": 0,
+  "indoor_share": 0.17794501426230502,
+  "mean_temperature_f": 72.81744249559993,
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656121294159796,
+      "mae": 2.573000402669446,
+      "rmse": 3.4705858368275626
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6652645435616567,
+      "mae": 2.571436050367894,
+      "rmse": 3.4695614436938933
+    },
+    "log_likelihood_gain": 0.0003475858543229293,
+    "log_likelihood_gain_interval": {
+      "point": 0.0003475858543119728,
+      "low": -0.0007487516717645284,
+      "high": 0.001347684243925114
+    },
+    "mae_change": -0.0015643523015520522,
+    "added_coefficients": [
+      {
+        "name": "game_temperature_f",
+        "mean": -0.08623742778267936,
+        "sd": 0.04208728441931574,
+        "z": 2.0490138285828947
+      },
+      {
+        "name": "game_wind_out_component_mph",
+        "mean": 0.14173844088880705,
+        "sd": 0.040516747133627316,
+        "z": 3.498268022883053
+      }
+    ]
+  },
+  "intervals": [
+    {
+      "unit": "pitcher (reference, wrong unit)",
+      "clusters": 291,
+      "low": -0.0007487516717645284,
+      "high": 0.001347684243925114
+    },
+    {
+      "unit": "park",
+      "clusters": 30,
+      "low": -0.0007730524304099505,
+      "high": 0.0017250629956929136
+    },
+    {
+      "unit": "park-season",
+      "clusters": 60,
+      "low": -0.000831519269812486,
+      "high": 0.0014977268607358131
+    },
+    {
+      "unit": "date",
+      "clusters": 294,
+      "low": -0.0008316904902667853,
+      "high": 0.0015079271615541594
+    }
+  ],
+  "verdict": "CLEARS THE PRE-REGISTERED BAR, but a correctly clustered interval includes zero — the direction is right and the size is not established"
+}

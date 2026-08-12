@@ -1,0 +1,69 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "weather_source": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/game_weather.csv",
+  "parameterisation": "temp",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "rows_dropped_without_weather": 0,
+  "indoor_share": 0.17794501426230502,
+  "mean_temperature_f": 72.81744249559993,
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8790969295278875,
+      "mae": 0.0801042925821283,
+      "rmse": 0.10041149848231527
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": 0.8788564078634779,
+      "mae": 0.08019192665734261,
+      "rmse": 0.100439655059632
+    },
+    "log_likelihood_gain": -0.00024052166440968747,
+    "log_likelihood_gain_interval": {
+      "point": -0.00024052166440762725,
+      "low": -0.0012192172783460488,
+      "high": 0.0007857366589265794
+    },
+    "mae_change": 0.0000876340752143101,
+    "added_coefficients": [
+      {
+        "name": "game_temperature_f",
+        "mean": -0.0040977540906662205,
+        "sd": 0.0011851103204949425,
+        "z": 3.457698426721032
+      }
+    ]
+  },
+  "intervals": [
+    {
+      "unit": "pitcher (reference, wrong unit)",
+      "clusters": 291,
+      "low": -0.0012192172783460488,
+      "high": 0.0007857366589265794
+    },
+    {
+      "unit": "park",
+      "clusters": 30,
+      "low": -0.0010599840115598188,
+      "high": 0.0005655993887224306
+    },
+    {
+      "unit": "park-season",
+      "clusters": 60,
+      "low": -0.0011155913038786666,
+      "high": 0.0007269220046750763
+    },
+    {
+      "unit": "date",
+      "clusters": 294,
+      "low": -0.0012954056576369576,
+      "high": 0.0007589300274552841
+    }
+  ],
+  "verdict": "does not clear the pre-registered bar"
+}

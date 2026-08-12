@@ -8,16 +8,38 @@ use std::collections::HashMap;
 struct RateStats {
     earned_runs: f64,
     innings: f64,
+    strikeouts: f64,
+    batters_faced: f64,
 }
 impl RateStats {
     fn add(&mut self, row: &PitcherStartLog) {
         self.earned_runs += row.earned_runs as f64;
         self.innings += row.innings_pitched;
+        self.strikeouts += row.strikeouts as f64;
+        self.batters_faced += row.batters_faced as f64;
     }
     fn rate(self, fallback: f64, prior_innings: f64) -> f64 {
         (self.earned_runs + fallback * prior_innings) / (self.innings + prior_innings)
     }
+    /// Strikeouts per batter faced, shrunk toward `fallback` the same way
+    /// [`Self::rate`] shrinks ER/IP. The denominator is batters faced rather than
+    /// innings because a strikeout rate per *inning* would confound how often the
+    /// opponent strikes out with how much traffic it puts on.
+    fn k_rate(self, fallback: f64, prior_batters: f64) -> f64 {
+        (self.strikeouts + fallback * prior_batters) / (self.batters_faced + prior_batters)
+    }
 }
+
+/// League K/PA before any games are absorbed. Only reachable on the dataset's
+/// very first date, where every factor collapses to exactly 1.0 anyway.
+const PRIOR_LEAGUE_K_RATE: f64 = 0.22;
+
+/// Shrinkage prior for an opponent's strikeout rate against one pitcher hand, in
+/// batters faced. Chosen to match the existing 60-innings prior on
+/// [`ContextAccumulators::opponent_offense_factor`] in scale — 60 IP is roughly
+/// 258 batters — so the two opponent factors are shrunk comparably rather than
+/// one being trusted far earlier in a season than the other.
+const OPPONENT_K_PRIOR_BATTERS: f64 = 250.0;
 
 /// Running ER/IP totals behind the historical context fold: league wide, by
 /// (opponent, pitcher hand), and by park. Training enrichment and live as-of
@@ -46,6 +68,33 @@ impl ContextAccumulators {
             .copied()
             .unwrap_or_default()
             .rate(league_rate, 60.0);
+        (opponent_rate / league_rate).clamp(0.75, 1.30)
+    }
+
+    fn league_k_rate(&self) -> f64 {
+        if self.league.batters_faced > 0.0 {
+            self.league.strikeouts / self.league.batters_faced
+        } else {
+            PRIOR_LEAGUE_K_RATE
+        }
+    }
+
+    /// How much more or less often this opponent strikes out against pitchers of
+    /// `hand`, relative to the league.
+    ///
+    /// This is the strikeout analogue of [`Self::opponent_offense_factor`], which
+    /// measures the same opponent in *earned runs* — a proxy that the v3
+    /// artifact's coefficients show carries essentially nothing for the k-rate
+    /// regression (-0.00111 per SD, against +0.01274 for swinging-strike rate).
+    /// Clamped to the same bounds as the ER factor rather than new ones.
+    pub(crate) fn opponent_k_factor(&self, opponent_id: u32, hand: char) -> f64 {
+        let league_rate = self.league_k_rate();
+        let opponent_rate = self
+            .opponents
+            .get(&(opponent_id, hand))
+            .copied()
+            .unwrap_or_default()
+            .k_rate(league_rate, OPPONENT_K_PRIOR_BATTERS);
         (opponent_rate / league_rate).clamp(0.75, 1.30)
     }
 
@@ -140,6 +189,51 @@ pub(crate) fn accumulate_historical_context(
     }
     rows.sort_by_key(|row| (row.pitcher_id, row.game_date));
     state
+}
+
+/// Opponent strikeout factors for every start, keyed the way a `FeatureRow`
+/// identifies itself.
+///
+/// A **study** surface. It deliberately returns a map instead of writing a
+/// column onto [`PitcherStartLog`], so measuring whether this feature earns its
+/// place costs no dataset rewrite and no schema bump. If it clears its bar the
+/// factor moves into [`accumulate_historical_context`] beside the ER one.
+///
+/// Leakage is prevented the same way that fold prevents it: every factor on a
+/// date is read *before* any of that date's rows are absorbed, so a start can
+/// see neither its own game nor another game played the same day.
+pub fn opponent_k_factors(
+    rows: &[PitcherStartLog],
+    hands: &HashMap<u32, char>,
+) -> HashMap<(u32, NaiveDate), f64> {
+    let mut order: Vec<usize> = (0..rows.len()).collect();
+    order.sort_by_key(|&index| rows[index].game_date);
+    let mut state = ContextAccumulators::default();
+    let mut factors = HashMap::new();
+    let mut index = 0;
+    while index < order.len() {
+        let date = rows[order[index]].game_date;
+        let end = order[index..]
+            .iter()
+            .position(|&row_index| rows[row_index].game_date > date)
+            .map(|offset| index + offset)
+            .unwrap_or(order.len());
+        for &row_index in &order[index..end] {
+            let row = &rows[row_index];
+            let hand = hands.get(&row.pitcher_id).copied().unwrap_or('R');
+            factors.insert(
+                (row.pitcher_id, row.game_date),
+                state.opponent_k_factor(row.opponent_id, hand),
+            );
+        }
+        for &row_index in &order[index..end] {
+            let row = &rows[row_index];
+            let hand = hands.get(&row.pitcher_id).copied().unwrap_or('R');
+            state.add(row, hand);
+        }
+        index = end;
+    }
+    factors
 }
 
 #[derive(Deserialize)]
@@ -304,6 +398,88 @@ pub fn join_pitch_outcomes(
 
 #[cfg(test)]
 mod tests {
+    /// The opponent strikeout factor must be blind to its own date, and must
+    /// move with how often the opponent actually strikes out.
+    ///
+    /// The same-day half matters most: two games against the same opponent on
+    /// the same day must both read neutral. If the fold absorbed rows as it went
+    /// rather than a date at a time, the second one would already "know" the
+    /// first, which is the subtle form of leakage that inflates a study's gain
+    /// without failing anything visible.
+    #[test]
+    fn opponent_k_factor_is_as_of_and_tracks_strikeout_tendency() {
+        use crate::data::types::PitcherStartLog;
+        use std::collections::HashMap;
+
+        fn start(
+            pitcher_id: u32,
+            day: u32,
+            opponent_id: u32,
+            strikeouts: u16,
+            batters_faced: u16,
+        ) -> PitcherStartLog {
+            PitcherStartLog {
+                pitcher_id,
+                pitcher_name: format!("Pitcher {pitcher_id}"),
+                game_pk: pitcher_id * 100 + day,
+                game_date: chrono::NaiveDate::from_ymd_opt(2026, 5, day)
+                    .expect("valid fixture date"),
+                team_id: 900 + pitcher_id,
+                opponent_id,
+                opponent_name: None,
+                home: true,
+                innings_pitched: 6.0,
+                strikeouts,
+                walks: 2,
+                home_runs: 1,
+                earned_runs: 3,
+                hits: 5,
+                batters_faced,
+                pitch_count: Some(95),
+                ground_ball_pct: Some(0.45),
+                avg_fb_velo: Some(93.5),
+                historical_park_factor: None,
+                historical_opponent_offense: None,
+                pitch_hand: None,
+                opponent_batters: Vec::new(),
+                pitches: None,
+                swinging_strikes: None,
+                called_strikes: None,
+            }
+        }
+
+        let rows = vec![
+            // Day 1: opponent 20 strikes out constantly, opponent 30 barely.
+            start(1, 1, 20, 15, 30),
+            start(5, 1, 20, 15, 30),
+            start(2, 1, 30, 3, 30),
+            // Day 2: fresh pitchers face those same two opponents.
+            start(3, 2, 20, 9, 30),
+            start(4, 2, 30, 9, 30),
+        ];
+        let factors = super::opponent_k_factors(&rows, &HashMap::new());
+        let date =
+            |day| chrono::NaiveDate::from_ymd_opt(2026, 5, day).expect("valid fixture date");
+
+        // Nothing is absorbed yet on the first date, so every factor is exactly
+        // neutral — including the *second* game against opponent 20.
+        assert_eq!(factors[&(1, date(1))], 1.0);
+        assert_eq!(factors[&(5, date(1))], 1.0);
+        assert_eq!(factors[&(2, date(1))], 1.0);
+
+        // By day 2 the league sits at 33/90 and the opponents have separated.
+        let high = factors[&(3, date(2))];
+        let low = factors[&(4, date(2))];
+        assert!(
+            high > 1.0,
+            "an opponent that strikes out often must read above neutral, got {high}"
+        );
+        assert!(
+            low < 1.0,
+            "an opponent that rarely strikes out must read below neutral, got {low}"
+        );
+    }
+
     #[test]
     fn aggregates_fastballs_by_start_date() {
         let csv = "pitch_type,game_date,release_speed\nFF,2025-04-01,95.0\nSI,2025-04-01,93.0\nKC,2025-04-01,80.0\nFF,2025-04-07,96.0\n";

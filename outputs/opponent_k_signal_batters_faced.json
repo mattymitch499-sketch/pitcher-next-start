@@ -1,0 +1,107 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "added_feature": "opponent_k_factor",
+  "target": "batters_faced",
+  "split": "2025-01-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "league_k_per_batter_faced": 0.22064006690670535,
+  "factor_spread": {
+    "min": 0.7925250927039854,
+    "max": 1.228484281886949,
+    "mean": 1.0000564225186748,
+    "standard_deviation": 0.07976165129197428
+  },
+  "comparison": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656121294159796,
+      "mae": 2.573000402669446,
+      "rmse": 3.4705858368275626
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656123140811725,
+      "mae": 2.572679611751814,
+      "rmse": 3.4705778951793764
+    },
+    "log_likelihood_gain": -1.8466519291493455e-7,
+    "log_likelihood_gain_interval": {
+      "point": -1.8466519878782402e-7,
+      "low": -0.00020083040472707912,
+      "high": 0.0001912791179655823
+    },
+    "mae_change": -0.00032079091763215217,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": -0.03086186112817582,
+        "sd": 0.0412482977558235,
+        "z": 0.7481972058790886
+      }
+    ]
+  },
+  "comparison_clustered_by_opponent": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656121294159796,
+      "mae": 2.573000402669446,
+      "rmse": 3.4705858368275626
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656123140811725,
+      "mae": 2.572679611751814,
+      "rmse": 3.4705778951793764
+    },
+    "log_likelihood_gain": -1.8466519291493455e-7,
+    "log_likelihood_gain_interval": {
+      "point": -1.8466519878782402e-7,
+      "low": -0.00031791021179890873,
+      "high": 0.0002882225178906507
+    },
+    "mae_change": -0.00032079091763215217,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": -0.03086186112817582,
+        "sd": 0.0412482977558235,
+        "z": 0.7481972058790886
+      }
+    ]
+  },
+  "comparison_clustered_by_opponent_season": {
+    "fit_rows": 8187,
+    "baseline": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656121294159796,
+      "mae": 2.573000402669446,
+      "rmse": 3.4705858368275626
+    },
+    "augmented": {
+      "rows": 7000,
+      "mean_log_likelihood": -2.6656123140811725,
+      "mae": 2.572679611751814,
+      "rmse": 3.4705778951793764
+    },
+    "log_likelihood_gain": -1.8466519291493455e-7,
+    "log_likelihood_gain_interval": {
+      "point": -1.8466519878782402e-7,
+      "low": -0.0002560270514310969,
+      "high": 0.00027759620110425013
+    },
+    "mae_change": -0.00032079091763215217,
+    "added_coefficients": [
+      {
+        "name": "opponent_k_factor",
+        "mean": -0.03086186112817582,
+        "sd": 0.0412482977558235,
+        "z": 0.7481972058790886
+      }
+    ]
+  },
+  "verdict": "does not clear the pre-registered bar"
+}

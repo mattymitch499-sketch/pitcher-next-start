@@ -231,7 +231,8 @@ pub fn normalize_name(name: &str) -> String {
 }
 
 /// P(strikeouts >= threshold) from a PMF where index `k` holds P(exactly k).
-fn pmf_over_probability(pmf: &[f64], threshold: u16) -> Option<f64> {
+/// P(strikeouts >= threshold) from any strikeout PMF, model or simulator.
+pub fn pmf_over_probability(pmf: &[f64], threshold: u16) -> Option<f64> {
     if pmf.is_empty() {
         return None;
     }

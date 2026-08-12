@@ -1,0 +1,69 @@
+{
+  "dataset": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/training_starts_v4.csv",
+  "weather_source": "C:\\Users\\Matthew Mitchell\\pitcher-next-start\\crates\\pns-core\\../..\\data/processed/game_weather.csv",
+  "parameterisation": "temp",
+  "split": "2026-05-01",
+  "through": "2026-07-16",
+  "history_window": 5,
+  "rows_scored": 15187,
+  "rows_dropped_without_weather": 0,
+  "indoor_share": 0.17794501426230502,
+  "mean_temperature_f": 72.81744249559993,
+  "comparison": {
+    "fit_rows": 13441,
+    "baseline": {
+      "rows": 1746,
+      "mean_log_likelihood": 0.8886761314765093,
+      "mae": 0.07926101712547653,
+      "rmse": 0.09945039658974181
+    },
+    "augmented": {
+      "rows": 1746,
+      "mean_log_likelihood": 0.8889387903625111,
+      "mae": 0.07930996762463241,
+      "rmse": 0.09942497576923888
+    },
+    "log_likelihood_gain": 0.00026265888600185416,
+    "log_likelihood_gain_interval": {
+      "point": 0.00026265888600356937,
+      "low": -0.00098635019981347,
+      "high": 0.0014677917105688667
+    },
+    "mae_change": 0.00004895049915587535,
+    "added_coefficients": [
+      {
+        "name": "game_temperature_f",
+        "mean": -0.0030234702720295225,
+        "sd": 0.0009088036511458509,
+        "z": 3.3268685355933894
+      }
+    ]
+  },
+  "intervals": [
+    {
+      "unit": "pitcher (reference, wrong unit)",
+      "clusters": 191,
+      "low": -0.00098635019981347,
+      "high": 0.0014677917105688667
+    },
+    {
+      "unit": "park",
+      "clusters": 30,
+      "low": -0.0012173443759689287,
+      "high": 0.001541880100290386
+    },
+    {
+      "unit": "park-season",
+      "clusters": 30,
+      "low": -0.0012173443759689287,
+      "high": 0.001541880100290386
+    },
+    {
+      "unit": "date",
+      "clusters": 74,
+      "low": -0.0009712097054885238,
+      "high": 0.0013624373611001847
+    }
+  ],
+  "verdict": "CLEARS THE PRE-REGISTERED BAR, but a correctly clustered interval includes zero — the direction is right and the size is not established"
+}
